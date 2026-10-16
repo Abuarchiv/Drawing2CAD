@@ -165,11 +165,22 @@ def test_tessellated_circle_and_arc(tmp_path):
         ({"region": (0.1, 0.1, 1.2, 0.9)}, "region"),
         ({"region": (0.1, 0.1, 0.9)}, "region"),
         ({"scale": 0}, "scale"),
+        ({"scale": float("nan")}, "scale"),
+        ({"edge_width": "thick"}, "edge_width"),
     ],
 )
 def test_extract_rejects_bad_arguments(tmp_path, kwargs, message):
     with pytest.raises(ValueError, match=message):
         extract(_plate_pdf(tmp_path / "plate.pdf", 1), **kwargs)
+
+
+def test_page_without_vector_geometry(tmp_path):
+    """A scan or blank page has nothing to measure: empty results, no error."""
+    pdf = _sheet(tmp_path / "blank.pdf", lambda page: None)
+    res = extract(pdf)
+    assert res["styles"] == [] and res["circles"] == [] and res["extent_mm"] is None
+    assert verify(res, ["d=5"])[0]["status"] == "no_candidates"
+    assert suggest_scale(pdf, [10, 20]) == []
 
 
 PLATE_DIMS = [80, 50, 30, 16, 35, 15]  # plate size, hole diameters, hole spacing in x and y

@@ -724,7 +724,13 @@ def _visible_widths(scores: dict[float, float], edge_width: str | float) -> list
     if edge_width == "auto":
         best = max(scores.values(), default=0.0)
         return [max(w for w, s in scores.items() if s >= 0.12 * best)] if best > 0 else []
-    return [min(scores, key=lambda w: abs(w - float(edge_width)))] if scores else []
+    try:
+        target = float(edge_width)
+    except ValueError:
+        raise ValueError(
+            f'edge_width must be "auto", "all" or a stroke width in pt, got {edge_width!r}'
+        ) from None
+    return [min(scores, key=lambda w: abs(w - target))] if scores else []
 
 
 # ---------------------------------------------------------------------------------------------
@@ -864,7 +870,7 @@ def extract(
         area_mm2), largest first. Coordinates and sizes are model mm, y up, origin at the
         lower-left corner of the region.
     """
-    if scale <= 0:
+    if not scale > 0:
         raise ValueError(f"scale must be positive, got {scale}")
     rx0, ry0, rx1, ry1 = _check_region(region)
     width, height, flat = _read_page(pdf_path, page)
