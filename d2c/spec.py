@@ -8,7 +8,7 @@ import re
 from collections import Counter
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, model_validator
 
 # Plain numbers in a printed dimension text, with "." or "," as decimal separator.
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
@@ -67,9 +67,12 @@ class Feature(_Strict):
 
 
 class ExpectedHole(_Strict):
-    """A hole the finished model must have: diameter d, a point `at` on its axis and the axis direction."""
+    """A hole the finished model must have.
 
-    d: float
+    d is the diameter, at a point on the hole axis, axis its direction (not the zero vector).
+    """
+
+    d: PositiveFloat
     at: tuple[float, float, float]
     axis: tuple[float, float, float]
     dim_ids: list[str]
@@ -78,7 +81,7 @@ class ExpectedHole(_Strict):
 class Expected(_Strict):
     """What the finished model must satisfy. bbox is (xlen, ylen, zlen) in model coordinates."""
 
-    bbox: tuple[float, float, float]
+    bbox: tuple[PositiveFloat, PositiveFloat, PositiveFloat]
     holes: list[ExpectedHole] = []
 
 
@@ -160,10 +163,8 @@ class PartSpec(_Strict):
         for d in self.dimensions:
             # (c) assumed or low-confidence dimensions are under review
             if (d.assumed or d.confidence < 0.8) and d.id not in reviewed:
-                errors.append(
-                    f"dimension {d.id!r}: assumed or confidence {d.confidence} < 0.8, "
-                    "so a review item must list it in refs"
-                )
+                cause = "assumed=true" if d.assumed else f"confidence {d.confidence} < 0.8"
+                errors.append(f"dimension {d.id!r}: {cause}, so a review item must list it in refs")
             # (d) an assumption needs its basis
             if d.assumed and not (d.assumption_basis or "").strip():
                 errors.append(f"dimension {d.id!r}: assumed=true needs a non-empty assumption_basis")
@@ -180,6 +181,11 @@ class PartSpec(_Strict):
         hole_features = [f.id for f in self.features if f.type == "hole"]
         if hole_features and not self.expected.holes:
             errors.append(f"hole features {hole_features} need at least one entry in expected.holes")
+
+        # an expected hole needs an axis direction
+        for k, hole in enumerate(self.expected.holes):
+            if not any(hole.axis):
+                errors.append(f"expected.holes[{k}]: axis must not be the zero vector")
 
         if errors:
             raise ValueError("; ".join(errors))

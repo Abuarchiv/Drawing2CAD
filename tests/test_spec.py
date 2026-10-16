@@ -44,10 +44,11 @@ def test_minimal_valid():
     nested["dimensions"][0]["colour"] = "red"
     reject(nested, "colour")
     reject({**minimal_spec(), "units": "inch"}, "units")
-    # a NaN bbox would let every later size comparison pass silently
-    nan = minimal_spec()
-    nan["expected"]["bbox"] = [float("nan"), 19.0, 76.2]
-    reject(nan, "bbox")
+    # sizes are positive and finite: NaN, inf, zero or negative would let later size comparisons pass silently
+    for bbox in ([float("nan"), 19.0, 76.2], [19.0, float("inf"), 76.2], [0, 19.0, 76.2], [19.0, 19.0, -76.2]):
+        bad = minimal_spec()
+        bad["expected"]["bbox"] = bbox
+        reject(bad, "bbox")
 
 
 def test_duplicate_ids_rejected():
@@ -95,7 +96,7 @@ def test_unknown_ref_rejected():
 def test_low_confidence_requires_review():
     spec = minimal_spec()
     spec["dimensions"][0]["confidence"] = 0.7
-    reject(spec, "d1")
+    reject(spec, r"dimension 'd1': confidence 0\.7 < 0\.8, so a review item")  # names the real cause
     spec["review"] = [review_item()]
     PartSpec.model_validate(spec)
     # the threshold is strictly below 0.8
@@ -121,7 +122,7 @@ def test_assumed_requires_basis_and_review():
     spec["dimensions"][2]["assumption_basis"] = "width equals the 20 mm bore pitch"
     PartSpec.model_validate(spec)
     spec["review"] = []
-    reject(spec, "d3")  # basis but no review
+    reject(spec, r"dimension 'd3': assumed=true, so a review item")  # basis but no review, confidence is fine
     # review entries need a real assumption and reason
     for field in ("assumption", "reason"):
         spec["review"] = [review_item(refs=("d3",), issue="missing", **{field: " "})]
@@ -179,8 +180,16 @@ def test_hole_feature_requires_expected_hole():
     spec = minimal_spec()
     spec["features"].append({"id": "f2", "type": "hole", "dim_ids": ["d1"]})
     reject(spec, "f2")
-    spec["expected"]["holes"] = [{"d": 19.0, "at": [0, 0, 0], "axis": [0, 0, 1], "dim_ids": ["d1"]}]
+    hole = {"d": 19.0, "at": [0, 0, 0], "axis": [0, 0, 1], "dim_ids": ["d1"]}
+    spec["expected"]["holes"] = [hole]
     PartSpec.model_validate(spec)
+    # a hole needs a positive diameter, finite coordinates and an axis direction
+    for changes, match in [({"d": 0}, r"holes\.0\.d"), ({"d": -6.6}, r"holes\.0\.d"),
+                           ({"at": [float("nan"), 0, 0]}, r"holes\.0\.at")]:
+        spec["expected"]["holes"] = [{**hole, **changes}]
+        reject(spec, match)
+    spec["expected"]["holes"] = [hole, {**hole, "axis": [0, 0, 0]}]
+    reject(spec, r"expected\.holes\[1\]: axis")
 
 
 def test_tolerance_fields_validated():
