@@ -1,0 +1,6 @@
+data/
+drawings/
+tables/
+results/
+.env
+.git/

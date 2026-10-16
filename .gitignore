@@ -1,0 +1,10 @@
+# BCT sample data and everything derived from it stays out of git
+data/
+drawings/
+tables/
+results/
+
+.env
+__pycache__/
+*.egg-info/
+.pytest_cache/
