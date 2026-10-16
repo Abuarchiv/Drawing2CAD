@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ein lokal laufender MCP-Server (Docker, CadQuery), über den ein beliebiges multimodales KI-Modell technische 2D-Zeichnungen in validierte STEP-Modelle mit Review-Liste umsetzt.
+**Goal:** Ein lokal laufender MCP-Server (Docker, CadQuery), über den ein beliebiges multimodales KI-Modell technische 2D-Zeichnungen in validierte STEP-Modelle umsetzt. Dazu gibt es eine Review-Liste, und die unklaren Stellen sind im STEP farbig markiert.
 
 **Architecture:** Das Modell ist eine Liste von Operationen. Jede Änderung baut alle Operationen in einem Sandbox-Subprozess neu und gibt einen maschinenlesbaren BuildReport zurück (Solid gültig, Maße gegen Spec, STEP-Roundtrip). `export_step` schreibt das geprüfte STEP nach `results/` und erzeugt `review.md`. Die Zeichnung erreicht das Modell als Bild über das Tool `render_drawing`, die Maße kommen als validierte `PartSpec` zurück.
 
@@ -23,9 +23,11 @@
   - `XZ`: Normale **−Y**, u = X, v = +Z
   - `YZ`: Normale +X, u = Y, v = Z
   - Diese Zeilen stehen auch im Docstring von `SketchPlane`.
-- Zwei Datenordner, beide nicht versioniert:
+- Datenquelle: `/Users/abu/Downloads/OneDrive_1_16.10.2026/` (21 Teile unter `Drawing2CAD/`, dazu `bct_isolim.xml` und `bct_toltabs.xml`). Ordnernamen enthalten Leerzeichen und Klammern, die PDF-Namen sind uneinheitlich (`*_dwg.pdf`, `*.pdf`, `1 106 0168 3.pdf`).
+- Drei Datenordner, alle nicht versioniert:
   - `data/` ist die vollständige Kopie mit Referenz-STEPs. Nur Tests und `scripts/eval_refs.py` nutzen sie.
-  - `drawings/` enthält nur die `*_dwg.pdf`. Nur dieser Ordner wird für den MCP-Server als `/data` eingehängt (read-only).
+  - `drawings/` enthält nur die PDFs. Nur dieser Ordner wird für den MCP-Server als `/data` eingehängt (read-only).
+  - `tables/` enthält die beiden BCT-XML-Tabellen und wird als `/tables` eingehängt (`D2C_TABLES`, nur für Task 14).
 - Ergebnisse liegen unter `/app/results`. `D2C_DATA` und `D2C_RESULTS` überschreiben die Pfade, beide werden bei jedem Aufruf gelesen.
 - Sandbox-Grenzwerte:
   - `D2C_TIMEOUT` (Standard 60 s) ist die Wanduhr-Grenze über `subprocess.run(timeout=…)`.
@@ -43,7 +45,8 @@
 2. **Rundung oder Fase trifft keine oder ungewollte Kanten**: Keine Kante gewählt ist ein Fehler, die Anzahl gewählter Kanten steht im Report. Tests `test_fillet_no_edge_errors` und `test_fillet_reports_edge_count` in Task 3.
 3. **Feature schwebt neben dem Grundkörper** (2 Solids): Der Report meldet `solids=2, ok=false`. Test `test_two_solids_not_ok` in Task 4.
 4. **Endlosschleife im Fallback-Skript**: Der Prozess wird nach dem Timeout beendet, die Operation wird nicht angehängt. Tests `test_timeout_kills` (Task 5) und `test_failed_build_not_appended` (Task 7).
-5. **Pfad außerhalb von `/data` oder Umlaut im Teilnamen** (`Trägerplatte`): Der Pfad wird abgewiesen, der Umlaut funktioniert. Tests `test_render_rejects_outside_data` (Task 6) und `test_umlaut_part_name` (Task 7).
+5. **Pfad außerhalb von `/data`, Leerzeichen oder Klammern im Pfad, Umlaut im Teilnamen** (`Komplexe Zeichnung 1/1 106 0168 3.pdf`, `Trägerplatte`): Ein Pfad außerhalb wird abgewiesen, die anderen funktionieren. Tests `test_render_rejects_outside_data`, `test_render_path_with_spaces` (Task 6), `test_umlaut_part_name` (Task 7).
+6. **Review-Markierung trifft keine Fläche**: Die Markierung wäre unsichtbar. Der Report meldet `ok=false`. Test `test_mark_without_face_not_ok` (Task 4).
 
 ---
 
@@ -76,9 +79,10 @@
 **Interfaces:** Produces: Image `d2c` mit `WORKDIR /app`, Entrypoint `python -m d2c.server`. Der TEST-Befehl überschreibt den Entrypoint nicht, sondern ruft `pytest` als Kommando auf. Deshalb nutzt das Image `CMD` statt `ENTRYPOINT`.
 
 - [ ] **Step 1:** Repo ist bereits eingerichtet (`main` folgt `origin/main`). Beispieldaten kopieren:
-  - `rsync -a /Users/abu/Downloads/Drawing2CAD/ data/`
-  - `rsync -a --include '*/' --include '*_dwg.pdf' --exclude '*' /Users/abu/Downloads/Drawing2CAD/ drawings/`
-- [ ] **Step 2:** `.gitignore`: `data/`, `drawings/`, `__pycache__/`, `*.egg-info/`, `.pytest_cache/`. `.dockerignore`: `data/`, `drawings/`, `results/`, `.git/`.
+  - `rsync -a /Users/abu/Downloads/OneDrive_1_16.10.2026/Drawing2CAD/ data/`
+  - `rsync -a --include '*/' --include '*.pdf' --exclude '*' /Users/abu/Downloads/OneDrive_1_16.10.2026/Drawing2CAD/ drawings/`
+  - `mkdir -p tables && cp /Users/abu/Downloads/OneDrive_1_16.10.2026/bct_*.xml tables/`
+- [ ] **Step 2:** `.gitignore`: `data/`, `drawings/`, `tables/`, `__pycache__/`, `*.egg-info/`, `.pytest_cache/`. `.dockerignore`: `data/`, `drawings/`, `tables/`, `results/`, `.git/`.
 - [ ] **Step 3:** `pyproject.toml`:
   - Projekt `d2c`, `requires-python = ">=3.12,<3.13"`
   - Abhängigkeiten `cadquery==2.8.0`, `mcp==2.3.0`
@@ -102,17 +106,18 @@
 **Files:** Create `d2c/spec.py`, `tests/test_spec.py`
 
 **Interfaces – Produces** (alle `pydantic.BaseModel`, `extra="forbid"`):
-- `Source(view: str, cell: str)` – `cell` muss auf `^[A-F][1-8]$` passen (Rasterfeld des A3-Rahmens).
+- `Source(view: str, cell: str | None)` – `cell` ist das Rasterfeld des Zeichnungsrahmens (A3: A–F/1–8, A4: A–F/1–4) und muss auf `^[A-F][1-8]$` passen. `None` steht für Zeichnungen ohne Raster (die komplexen Zeichnungen).
 - `Dimension(id: str, kind: Literal["length","diameter","radius","angle","chamfer","thread","count"], value: float, text: str, source: Source | None, confidence: float (0..1), assumed: bool = False, assumption_basis: str | None = None)`
 - `View(id: str, kind: Literal["front","top","side","section","detail","iso"], scale: str, note: str = "")`
 - `Feature(id: str, type: Literal["base","boss","pocket","hole","slot","fillet","chamfer","thread","revolve","other"], dim_ids: list[str], note: str = "")`
 - `ExpectedHole(d: float, at: tuple[float,float,float], axis: tuple[float,float,float], dim_ids: list[str])`
 - `Expected(bbox: tuple[float,float,float], holes: list[ExpectedHole] = [])` – `bbox` ist Pflicht (xlen, ylen, zlen in Modellkoordinaten)
-- `ReviewItem(id: str, refs: list[str], issue: Literal["missing","ambiguous","low_confidence","conflict","convention"], assumption: str, reason: str)`
-- `PartSpec(name: str (Pattern ^[\w-]+$), drawing: str, title: str, scale: str, units: Literal["mm"] = "mm", views: list[View], dimensions: list[Dimension], features: list[Feature], expected: Expected, review: list[ReviewItem])`
+- `ReviewItem(id: str, refs: list[str], issue: Literal["missing","ambiguous","low_confidence","conflict","convention"], assumption: str, reason: str, mark_near: list[tuple[float,float,float]] = [])` – `mark_near` sind Modellpunkte, an denen die betroffenen Flächen liegen (für die Farbmarkierung, Task 4)
+- `Note(id: str, text: str, source: Source | None)` – Hinweise der Zeichnung wortgetreu, z. B. „nicht bemaßte Radien R=1“, Zentrierbohrung „DIN 332 - A 2,0 x 4,25“, Oberflächenangaben
+- `PartSpec(name: str (Pattern ^[\w-]+$), drawing: str, page: int = 1, title: str, scale: str, units: Literal["mm"] = "mm", views: list[View], dimensions: list[Dimension], features: list[Feature], notes: list[Note] = [], expected: Expected, review: list[ReviewItem])` – `drawing` ist der Pfad relativ zu `/data` und bestimmt in `eval_refs` den Referenzordner (erste Pfadkomponente)
 - `PartSpec`-Validator. Bei jeder Verletzung wirft er `ValueError` und nennt die betroffene id:
-  - (a) ids über Dimensionen, Features, Views und Review-Einträge hinweg eindeutig
-  - (b) jede `ref` und jede `dim_id` existiert, jedes `source.view` verweist auf eine vorhandene View-id
+  - (a) ids über Dimensionen, Features, Views, Notes und Review-Einträge hinweg eindeutig
+  - (b) jede `ref` (Maß, Feature oder Note) und jede `dim_id` existiert, jedes `source.view` verweist auf eine vorhandene View-id
   - (c) jedes Maß mit `assumed` oder `confidence < 0.8` steht in einem `ReviewItem.refs`
   - (d) `assumed=true` erfordert eine nicht-leere `assumption_basis`
   - (e) `reason` und `assumption` sind nicht leer
@@ -163,7 +168,7 @@
   - `ScriptOp(op="script", code: str)` – führt den Code mit `result` (aktuelles `cq.Workplane`), `cq` und `math` aus. Danach muss `result` ein `cq.Workplane` sein.
 - `Op = Annotated[Union[ExtrudeOp, RevolveOp, HolesOp, EdgeFinishOp, ScriptOp], Field(discriminator="op")]`
 - `class BuildError(Exception)`
-- `build(ops: list[Op]) -> tuple[cq.Workplane, list[dict]]` – gibt Modell und `notes` zurück, z. B. `{"op_index": i, "edges_selected": n}` oder `{"op_index": i, "drilled_d": 4.2}`. Die erste Operation muss `mode="add"` haben. `cut` vor dem ersten `add` → `BuildError`.
+- `build(ops: list[Op]) -> tuple[cq.Workplane, list[dict]]` – gibt Modell und `build_notes` zurück, z. B. `{"op_index": i, "edges_selected": n}` oder `{"op_index": i, "drilled_d": 4.2}`. Die erste Operation muss `mode="add"` haben. `cut` vor dem ersten `add` → `BuildError`.
 
 - [ ] **Step 1: Tests schreiben** in `tests/test_ops.py`. Erwartungen sind exakt nachgerechnet, Toleranz 1e-6 relativ:
   - `test_extrude_xy_positive_z` (rect 10×20, d 5 → bbox z ∈ [0,5], V = 1000)
@@ -207,7 +212,11 @@
 - `dimension_check(wp, expected: Expected) -> list[dict]` – `bbox` vergleicht die Kantenlängen (xlen, ylen, zlen) in Modellkoordinaten. Rückgabe je Prüfung `{"check": "bbox_x"|"bbox_y"|"bbox_z"|"hole", "expected": ..., "actual": ..., "ok": bool, "dim_ids": [...]}`.
   - Für eine Bohrung zählt nur eine zylindrische Fläche (`BRepAdaptor_Surface`, `GeomAbs_Cylinder`), die alle drei Bedingungen erfüllt: \|2r − d\| ≤ 0.01, Abstand des Punkts `at` zur Zylinderachse ≤ 0.01, \|cos(Achse, axis)\| ≥ 0.9999.
   - `actual` für eine Bohrung: nächstgelegener Zylinder `{d, dist}` oder `null`.
-- `step_roundtrip(wp, path: str) -> dict` → schreibt mit `cq.exporters.export(wp.val(), path, "STEP")`, liest mit `cq.importers.importStep` → `{"path", "reimport_valid", "solids", "volume_rel_diff", "ok"}`.
+- `select_faces(shape, near: list[tuple3], tol: float = 0.5) -> list[cq.Face]` – Flächen mit `face.distance(cq.Vertex.makeVertex(*p)) <= tol` für einen der Punkte
+- `step_roundtrip(wp, path: str, marks: list[dict] = []) -> dict` – `marks` = `[{"id": str, "near": [...]}]`.
+  - Export: `asm = cq.Assembly(wp.val(), name=<Dateiname ohne Endung>, color=cq.Color(0.6, 0.67, 0.69))`. Für jede Markierung und jede gewählte Fläche `asm.addSubshape(face, name=<id>, color=cq.Color(1.0, 0.5, 0.0))`, dann `asm.export(path)`.
+  - Prüfung: Re-Import mit `cq.importers.importStep`.
+  - Rückgabe `{"path", "reimport_valid", "solids", "volume_rel_diff", "marks": [{"id", "faces": n}], "ok"}`. `ok` ist falsch, wenn eine Markierung 0 Flächen trifft.
 - `metrics(shape) -> dict` → `{"volume", "bbox_sorted": [a ≤ b ≤ c], "cyl_diameters": sorted unique, auf 0.01 gerundet}` (genutzt von `eval_refs`).
 
 - [ ] **Step 1: Tests schreiben:**
@@ -218,10 +227,12 @@
   - `test_hole_wrong_position_fails` (um 0.5 mm versetzt)
   - `test_hole_wrong_diameter_fails`
   - `test_roundtrip_ok` (tmp_path)
+  - `test_marked_faces_colored` (Box, Markierung auf der Oberseite → `faces == 1`, Datei enthält mindestens 2× `COLOUR_RGB`, Re-Import 1 gültiger Solid)
+  - `test_mark_without_face_not_ok` (Punkt 50 mm neben der Box → `ok` falsch)
   - `test_metrics_cyl_diameters` (Box mit Ø5- und Ø8-Bohrung → `[5.0, 8.0]`)
 - [ ] **Step 2:** TEST-Befehl `tests/test_checks.py` → FAIL.
 - [ ] **Step 3:** Implementieren.
-- [ ] **Step 4:** TEST-Befehl → `8 passed`.
+- [ ] **Step 4:** TEST-Befehl → `10 passed`.
 - [ ] **Step 5:** Commit `feat(checks): solid, dimension and STEP roundtrip validation`.
 
 **Dauer:** ca. 2 h
@@ -233,8 +244,8 @@
 **Files:** Create `d2c/worker.py`, `d2c/sandbox.py`, `tests/test_sandbox.py`
 
 **Interfaces – Consumes:** `build`, `BuildError` (Task 3), Check-Funktionen (Task 4). **Produces:**
-- Worker-Protokoll: stdin `{"ops": [...], "expected": {...} | null, "export_path": str | null}` → stdout genau eine JSON-Zeile:
-  - Jeder Report hat immer die Schlüssel `ok, error, solid, dims, notes, roundtrip`. Bei Fehler gilt `error = "<Typ>: <Meldung>"`, die übrigen Felder sind `null` bzw. `[]`.
+- Worker-Protokoll: stdin `{"ops": [...], "expected": {...} | null, "marks": [...], "export_path": str | null}` → stdout genau eine JSON-Zeile:
+  - Jeder Report hat immer die Schlüssel `ok, error, solid, dims, build_notes, roundtrip`. Die Markierungen stehen in `roundtrip.marks`. Bei Fehler gilt `error = "<Typ>: <Meldung>"`, die übrigen Felder sind `null` bzw. `[]`.
   - Der Worker exportiert bei **jedem** Build (R8c): nach `export_path`, sonst nach `model.step` in seinem temporären cwd. Danach re-importiert er. Bei Erfolg ist `roundtrip` nie `null`.
   - `ok` = Solid ok **und** alle Maßprüfungen ok **und** Roundtrip ok.
 - `check_script(code: str) -> None` – wirft `ValueError` bei:
@@ -275,21 +286,24 @@
 - `resolve_drawing(pdf: str) -> Path`:
   - relativ zu `data_root()` auflösen
   - nach `resolve()` muss der Pfad unter `data_root()` liegen und auf `.pdf` enden, sonst `ValueError`
-  - bei fehlender Datei nennt die Meldung die vorhandenen `*_dwg.pdf`
-- `render(pdf: str, dpi: int = 100, crop: tuple[float,float,float,float] | None = None) -> bytes` (PNG):
+  - bei fehlender Datei nennt die Meldung alle vorhandenen `*.pdf` (relativ zu `data_root()`)
+- `render(pdf: str, page: int = 1, dpi: int = 100, crop: tuple[float,float,float,float] | None = None) -> bytes` (PNG):
+  - Seitenzahl aus `pdfinfo`. `page` außerhalb von 1..n → `ValueError` mit der Seitenzahl
   - Seitengröße aus `pdfinfo`, `crop` in Seitenbruchteilen (x0, y0, x1, y1), 0 ≤ x0 < x1 ≤ 1
-  - effektive dpi = `min(dpi, 400, floor(2000·72 / längste Ausschnittkante in pt))`, damit die längste Bildseite höchstens 2000 px hat
-  - Aufruf: `pdftoppm -png -singlefile -r <dpi> [-x -y -W -H] <pdf> <tmp>`
+  - effektive dpi = `min(dpi, 600, floor(2000·72 / längste Ausschnittkante in pt))`. Die Zeichnungen sind Vektoren, höhere Auflösung bringt also echte Schärfe., damit die längste Bildseite höchstens 2000 px hat
+  - Aufruf: `pdftoppm -png -singlefile -f <page> -l <page> -r <dpi> [-x -y -W -H] <pdf> <tmp>` als Argumentliste (kein Shell-String, wegen der Leerzeichen)
 
 - [ ] **Step 1: Tests schreiben.** `D2C_DATA` = `/app/data` kommt aus `tests/conftest.py`.
-  - `test_render_full_page_size` (dpi 100 → PNG-Breite 1654 ±1, aus dem IHDR-Header gelesen)
+  - `test_render_full_page_size` (`Fuss/Fuss_dwg.pdf`, dpi 100 → PNG-Breite 1654 ±1, aus dem IHDR-Header gelesen)
+  - `test_render_path_with_spaces` (`Komplexe Zeichnung 1/1 106 0168 3.pdf`, page 2 → PNG)
+  - `test_page_out_of_range` (page 5 bei 4 Seiten → Fehler)
   - `test_render_crop_size`
   - `test_render_caps_long_side_2000`
   - `test_render_rejects_outside_data` (`../../etc/passwd`)
   - `test_missing_lists_available`
 - [ ] **Step 2:** TEST-Befehl → FAIL.
 - [ ] **Step 3:** Implementieren (nur Standardbibliothek und `subprocess`, kein Pillow).
-- [ ] **Step 4:** TEST-Befehl → `5 passed`.
+- [ ] **Step 4:** TEST-Befehl → `7 passed`.
 - [ ] **Step 5:** Commit `feat(drawing): render drawing pages and crops via pdftoppm`.
 
 **Dauer:** ca. 45 min
@@ -306,7 +320,7 @@
   - `specs: dict[str, PartSpec]`, `ops: dict[str, list[dict]]`, `last: dict[str, dict]`
   - `submit_spec(spec: PartSpec) -> dict` – setzt die Ops des Teils zurück, schreibt `results/<name>/spec.json` → `{"ok": True, "part": name, "dimensions": n, "review_items": m}`
   - `apply(part: str, op: dict) -> dict`:
-    - baut `ops + [op]` per `run_worker` mit `expected`
+    - baut `ops + [op]` per `run_worker` mit `expected` und `marks` aus `spec.review` (nur Einträge mit `mark_near`)
     - bei `error` (Build-Fehler oder Timeout) wird die Op **nicht** angehängt
     - sonst wird sie angehängt (auch bei `ok=false`), `ops.json` wird geschrieben
     - Rückgabe: Report mit `op_index`
@@ -322,7 +336,8 @@
 - Unbekanntes Teil (weder im Speicher noch auf der Platte) → `KeyError("unknown part '<name>'; call submit_spec first")`.
 - `review.render(spec: PartSpec, report: dict) -> str` – Markdown mit:
   - Kopf (Titel, Zeichnung, Maßstab)
-  - Tabelle „Annahmen und Unklarheiten“ (id, Maß/Feature, Problem, Annahme, Begründung, Quelle)
+  - Tabelle „Annahmen und Unklarheiten“ (id, Maß/Feature, Problem, Annahme, Begründung, Quelle, im STEP markierte Flächen)
+  - Liste „Hinweise der Zeichnung“ (alle `notes`)
   - Tabelle „Werte ohne Maßbezug“: Größenparameter der Ops (`d w h distance size corner_radius width center_distance depth pitch_d cbore_d cbore_depth csk_d` sowie jedes `r` in `revolve.points`), die keinem `Dimension.value` entsprechen (±0.01). Abgeleitete Werte wie 57.2 = 76.2 − 19 stehen hier absichtlich, damit ein Prüfer sie sieht.
   - Tabelle „Validierung“ (Prüfung, Soll, Ist, ok)
   - Ergebniszeile `Alle Prüfungen bestanden: ja/nein`
@@ -356,7 +371,7 @@
 
 | Tool | Signatur | Rückgabe |
 |---|---|---|
-| `render_drawing` | `(pdf: str, dpi: int = 100, crop: list[float] \| None = None)` | `Image` (png) |
+| `render_drawing` | `(pdf: str, page: int = 1, dpi: int = 100, crop: list[float] \| None = None)` | `Image` (png) |
 | `submit_spec` | `(spec: PartSpec)` | dict |
 | `extrude` | `(part: str, profile: Profile, plane: SketchPlane, distance: float, mode: "add"\|"cut" = "add", both: bool = False)` | Report |
 | `revolve` | `(part: str, points: list[list[float]], angle: float = 360, mode = "add")` | Report |
@@ -372,11 +387,11 @@
 Fehler aus `Session` und `drawing` (`KeyError`, `ValueError`, `IndexError`) fängt jedes Tool selbst ab und wirft sie neu als `ToolError(e.args[0] if e.args else str(e))` (aus `mcp.server.mcpserver.exceptions`). Grund: mcp 2.3 reicht nur die Meldung von `ToolError` an den Client durch, jede andere Ausnahme wird zu „Error executing tool <name>“ ohne Text (verifiziert). `if __name__ == "__main__": server.run("stdio")`.
 
 `d2c/instructions.md` legt den Ablauf fest, nummeriert:
-1. Ganzseite mit 100 dpi rendern. Ansichten, Maßstab und Sammelangaben bestimmen.
-2. Jede Ansicht als Ausschnitt mit 300 dpi rendern.
-3. Jede Maßzahl mit `text` wie gedruckt, `source.cell` und `confidence` erfassen. Was in keiner Ansicht bemaßt ist, mit `assumed=true` und `assumption_basis` erfassen.
+1. Ganzseite mit 100 dpi rendern, bei mehreren Seiten jede Seite. Ansichten, Maßstab (Schriftfeld), Sammelangaben und Hinweise bestimmen.
+2. Jede Ansicht als Ausschnitt mit 300–600 dpi rendern.
+3. Jede Maßzahl mit `text` wie gedruckt, `source.cell` und `confidence` erfassen. Was in keiner Ansicht bemaßt ist, mit `assumed=true` und `assumption_basis` erfassen. Die Basis ist das Maßverhältnis in der Zeichnung, z. B. „Breite = 2 × Bogenradius“. Hinweise als `notes` erfassen.
 4. `expected` füllen: Gesamt-BBox in Modellkoordinaten, jede Bohrung mit Position.
-5. `submit_spec`.
+5. Für jeden Review-Eintrag `mark_near` setzen: ein Punkt auf jeder Fläche, die das unklare Maß bestimmt. Dann `submit_spec`.
 6. Geometrie aufbauen, Grundkörper zuerst. Die Reihenfolge ist frei, solange der Report gültig bleibt.
    - Profil-Ecken mit `fillets` im `path`-Profil runden statt mit `edge_finish`.
    - Fasen und Absatz-Einstiche an Drehteilen als Punkte ins `revolve`-Profil legen.
@@ -425,7 +440,8 @@ Zusätzliche Regeln:
 
 **Interfaces – Consumes:** `metrics` (Task 4), `run_worker` (Task 5). **Produces:**
 - `eval_refs.py`:
-  - vergleicht jedes `<results_root()>/<T>/<T>.step` mit `<D2C_DATA>/<T>/<T>.stp`
+  - vergleicht jedes `<results_root()>/<T>/<T>.step` mit der einzigen `*.stp` ohne `_PMI` im Ordner `<D2C_DATA>/<erste Pfadkomponente von spec.drawing>/`
+  - eine ungültige Referenz (Komplexe Zeichnung 2) wird trotzdem verglichen, die Spalte MATCH zeigt dann `Referenz ungültig`
   - Ausgabe: Markdown-Tabelle mit den Spalten Teil | ΔV % | ΔBBox max mm | Ø fehlend | Ø zusätzlich | MATCH
   - MATCH nach Spec Abschnitt 5
   - Exit-Code 0 immer, die Tabelle ist reine Information
@@ -435,22 +451,25 @@ Zusätzliche Regeln:
 - [ ] **Step 1: Tests schreiben:**
   - `test_eval_identical_is_match` (Referenz gegen sich selbst, über eine kopierte Datei in tmp)
   - `test_eval_detects_missing_diameter`
+  - `test_eval_resolves_folder_with_spaces` (`spec.drawing = "Komplexe Zeichnung 3/1 763 1487 0.pdf"` → Referenz `1 763 1487 0.stp`)
   - `test_replay_fails_on_bad_part`
 - [ ] **Step 2:** TEST-Befehl → FAIL.
 - [ ] **Step 3:** Implementieren.
-- [ ] **Step 4:** TEST-Befehl → `3 passed`.
+- [ ] **Step 4:** TEST-Befehl → `4 passed`.
 - [ ] **Step 5:** Commit `feat(scripts): reference evaluation and replay`.
 
 **Dauer:** ca. 1 h
 
 ---
 
-### Task 11: Teile umsetzen – Pflicht-Meilenstein M1 (Fuss, Welle, Haken)
+### Task 11: Teile umsetzen – Pflicht-Meilenstein M1 (Sensoraufnahme, Fuss, Welle)
+
+Sensoraufnahme kommt zuerst. Sie ist einfach und enthält genau den Prüffall, den BCT für M3 und R10 vorbereitet hat: Die Breite fehlt absichtlich.
 
 Ausführender ist das KI-Modell über die MCP-Tools, nach `d2c/instructions.md`. **Keine** Python-Datei wird für ein einzelnes Teil von Hand geschrieben.
 
 **Ablauf pro Teil** (gilt auch für Task 12):
-- [ ] **a:** Isolierte Session wie in Task 9 Step 3 starten. Der Auftrag lautet: „Setze `<Teil>/<Teil>_dwg.pdf` nach den Server-Instructions um.“
+- [ ] **a:** Isolierte Session wie in Task 9 Step 3 starten. Der Auftrag lautet: „Setze `<Pfad der PDF>` nach den Server-Instructions um.“
 - [ ] **b:** `export_step` liefert `ok: true`.
 - [ ] **c:** Im Repo: `docker run --rm --network none -v "$PWD":/app -e D2C_DATA=/app/data d2c python scripts/eval_refs.py`.
   - Zeile MATCH: Teil fertig.
@@ -465,11 +484,11 @@ Ausführender ist das KI-Modell über die MCP-Tools, nach `d2c/instructions.md`.
 |---|---|
 | Fuss | Verdeckte Kanten der Seitenansicht: Ø33 von oben bis zur Plattenoberkante (z 19), darunter Ø19 durch. Hohlkehle R9.5 per `edge_finish` |
 | Welle | Nut: `slot` auf `YZ` mit Offset 14 (= 20 − 6), `angle=90`, `center_distance` 80, Breite 12. Einstich Ø28 × 2,5 und Fasen als `revolve`-Punkte. Die Zeichnung bemaßt R2 und 1×45° nur einmal, sie gelten an weiteren Absätzen → `assumed` + Review |
-| Haken | Platte 20 dick (z ±10), Ring Ø152 30 dick (z ±15) laut Schnitt A-A. Kontur als `path` mit scharfen Ecken plus `fillets` für R35, R35, R16 |
+| Sensoraufnahme | Maßstab 2:1. Breite nicht bemaßt → aus Bogenradius = halbe Breite ableiten, `assumed` + Review `missing` mit `mark_near` auf beiden Seitenflächen. Abnahme zusätzlich: Breite im Modell 20, Seitenflächen orange markiert. Langloch 5/15 mit Breite 5,5; M8 als `tapped` (Ø6.8) |
 
 Allgemein gilt: Kantenrundungen erzeugen Zylinderflächen. Deren Ø zählen im MATCH-Vergleich mit, jede Rundung muss also stimmen.
 
-**Abnahme M1:** 3 Zeilen in `results/EVAL.md`. Jede Zeile hat MATCH, oder jede Abweichung ist durch einen Review-Eintrag erklärt und im README-Abschnitt „Grenzen“ genannt. `python scripts/replay.py` liefert Exit-Code 0.
+**Abnahme M1:** In `review.md` der Sensoraufnahme steht die Breite als Annahme, die Seitenflächen sind im STEP markiert. Außerdem 3 Zeilen in `results/EVAL.md`. Jede Zeile hat MATCH, oder jede Abweichung ist durch einen Review-Eintrag erklärt und im README-Abschnitt „Grenzen“ genannt. `python scripts/replay.py` liefert Exit-Code 0.
 
 **Dauer:** ca. 3–4 h
 
@@ -479,18 +498,28 @@ Allgemein gilt: Kantenrundungen erzeugen Zylinderflächen. Deren Ø zählen im M
 
 Gleicher Ablauf a–d wie in Task 11.
 
+Reihenfolge nach Flächenzahl der Referenz, das ist ein grobes Maß für den Aufwand. Hinweise stehen nur bei Zeichnungen, die bereits gesichtet sind. Die übrigen werden beim Umsetzen in Schritt a gesichtet.
+
 | # | Teil | Achte auf |
 |---|---|---|
+| 0a | Achse | – |
+| 0b | Fixierung | – |
+| 0c | Splint | – |
+| 0d | 3-Loch-Hebel | Kontur aus drei Augen R9/R14,5 mit Stegen 18 breit, Winkel 50°, R10-Übergänge per `fillets`. Fasen 1×45° an allen Bohrungen beidseitig |
+| 0e | Haken | Platte 20 dick (z ±10), Ring Ø152 30 dick (z ±15) laut Schnitt A-A. Kontur als `path` mit scharfen Ecken plus `fillets` für R35, R35, R16 |
 | 1 | Rotation | Titel „Drehteil“ ≠ Ordnername → Review. Maßstab 1:2. Fase 5×45°, Detail B (2:1) mit „1“. 6× Ø12 auf Ø50 als `polar` |
 | 2 | Flansch | Maßstab 2:1. Wände (5) tangential zwischen den Naben, Steg 6: Tasche schneiden, dann die Naben wieder ansetzen. Ø2,5 und Ø3,5 mit Tiefe 10; ob Gewinde → Review. Die Bohrspitzen werden nicht modelliert, sie ändern MATCH nicht |
 | 3 | Trägerplatte | Sammelangabe R=20 → für jede betroffene Ecke `assumed` + Review (`path` + `fillets`). M5 als `tapped`, Senkungen Ø11/Ø6,6 und Ø10,5/Ø5,5. Wanddicke 6 gegenüber 6,5 in den Schnitten → Review `conflict` |
 | 4 | Dreistern | Arme unter 120°, Anzugswinkel 102°, R20 und R1. Gewölbte Oberseite eventuell per `run_script` |
 | 5 | Befestigung | Gabel R30/R40, 3× Ø12 unter 45°, schräge Rippe. Ebenen aus der Seitenansicht |
 | 6 | Maschinenteil | 12× Ø10 auf Ø76 mit 25,5° Teilung. Detail A (2:1). M10 außen als Ø10 + Review. Sammelangabe R=1 |
+| 7 | Lagerschaft, Getriebedeckel, Schnittmenge | – |
+| 8 | Grundplatte | 188 Flächen in der Referenz, viele Bohrungen → Lochmuster nutzen |
+| 9 | Komplexe Zeichnung 3, 1, 2 | Industriezeichnungen mit Form- und Lagetoleranzen, Passungen, Einzelheiten im Maßstab 5:1, mehreren Seiten. Symbole sind teils nicht lesbar → Review. Die Referenz von Nr. 2 ist ungültig. Das sind Bonus-Teile |
 
 **Abnahme:** Jedes umgesetzte Teil erfüllt die Kriterien aus Task 11. Teile, die nicht fertig werden, stehen mit Grund im README-Abschnitt „Grenzen“.
 
-**Dauer:** ca. 1–2 h pro Teil
+**Dauer:** ca. 0,5–1 h für die einfachen Teile (0a–0e), 1–2 h für die übrigen, die komplexen Zeichnungen offen
 
 ---
 
@@ -510,9 +539,44 @@ Gleicher Ablauf a–d wie in Task 11.
 
 ---
 
-## Danach (eigener Plan, erst wenn M1–M3 erfüllt sind)
+### Task 14: Toleranzen (Erweiterung X1)
 
-- **X1 Toleranzen:** `Dimension` um `tol_upper`, `tol_lower` und `fit` erweitern. Für das Ändern bestehender Modelle reicht `edit_op`, da Ops nach einem Neustart von der Platte geladen werden.
+Erst beginnen, wenn M1–M3 und R10 erfüllt sind.
+
+**Files:** Create `d2c/tolerances.py`, `tests/test_tolerances.py`; Modify `d2c/spec.py`, `d2c/checks.py`, `d2c/review.py`, `d2c/instructions.md`, `run/.mcp.json` (zusätzlich `-v /Users/abu/hackathon/tables:/tables:ro`)
+
+**Interfaces – Produces:**
+- `Dimension` erhält `tol_upper: float | None = None`, `tol_lower: float | None = None`, `fit: str | None = None` (Pattern `^[A-Za-z]{1,2}\d{1,2}$`, z. B. `H10`, `h10`).
+- `PartSpec` erhält `general_tolerance: Literal["ISO 2768-f","ISO 2768-m","ISO 2768-c","ISO 2768-v"] | None = None` und `nominal_mode: Literal["nominal","mid"] = "nominal"`.
+- `limits(dim: Dimension, general: str | None) -> tuple[float, float, str]` → (unteres Abmaß, oberes Abmaß, Quelle `"explicit"|"fit"|"general"|"none"`).
+  - Explizit vor Passung vor Allgemeintoleranz.
+  - Tabellen aus `D2C_TABLES` (Standard `/tables`): `bct_isolim.xml` (Knoten = Toleranzklasse) und `bct_toltabs.xml` (`toltable entry="DIN ISO 2768 (medium/mittel)"` usw.). Bereichsgrenzen: Attribute `over`/`from` und `to`/`up_to` werden beide gelesen. Der Wert gehört zu dem Bereich mit over < Nennmaß ≤ to. Für `from` gilt ≤ als untere Grenze.
+- `mid(dim, general) -> float` = Nennmaß + (oben + unten)/2.
+- `submit_spec` gibt zusätzlich für jedes tolerierte Maß `{id, nominal, lower, upper, mid, source}` zurück. Instruktion: Bei `nominal_mode="mid"` nutzen die Ops die `mid`-Werte.
+- Maßprüfung: `ExpectedHole.dim_ids` mit Toleranz → `ok`, wenn d_ist im Bereich [d + unten, d + oben] liegt (bei `mid`) bzw. d_ist = Nennmaß ± 0.01 ist (bei `nominal`). Der Report zeigt je Maß `in_tolerance`.
+- `review.md`: Tabelle „Toleranzen“ (Maß, Nennmaß, unteres/oberes Abmaß, Mitte, Quelle, eingehalten).
+
+- [ ] **Step 1: Tests schreiben:**
+  - `test_fit_h10_6` (6 h10 → (−0.048, 0.0, "fit"))
+  - `test_fit_H10_4` (4 H10 → (0.0, +0.048, "fit"))
+  - `test_iso2768_m_25` (25 mm, mittel → ±0.2)
+  - `test_range_boundary_inclusive` (6.0 liegt im Bereich 3–6)
+  - `test_explicit_beats_fit`
+  - `test_mid_asymmetric` („31 -0,1“ → 30.95)
+  - `test_hole_in_tolerance_mid_mode`
+- [ ] **Step 2:** TEST-Befehl → FAIL.
+- [ ] **Step 3:** Implementieren (`xml.etree.ElementTree`, Kodierung ISO-8859-1 aus dem XML-Kopf).
+- [ ] **Step 4:** TEST-Befehl über `tests/` → alle grün.
+- [ ] **Step 5:** Ein Teil mit Toleranzen erneut umsetzen, mit `nominal_mode="mid"`: Komplexe Zeichnung 3, falls umgesetzt, sonst ein einfaches Teil mit Passung. Erwartet: Die Toleranztabelle in `review.md` ist vollständig.
+- [ ] **Step 6:** Commit `feat(tolerances): ISO 286 fits, ISO 2768 general tolerances, mid-tolerance mode`.
+
+**Dauer:** ca. 3 h
+
+---
+
+## Danach (eigener Plan, erst wenn Task 14 steht)
+
+- **Geometrie aus Vektoren messen:** Die PDFs sind Vektorzeichnungen, Bögen liegen aber als ungeordnete Liniensegmente vor. Ein schneller Versuch, daraus Kreise zu rekonstruieren, hat nicht funktioniert. Funktioniert es später, kann ein Tool angenommene Maße exakt nachmessen.
 - **C1/C2 AP242 + PMI:** Export über OCP-XDE (`STEPCAFControl_Writer`, `Interface_Static.SetCVal("write.step.schema", "AP242DIS")`, `XCAFDoc_DimTolTool`). Prüfung mit dem NIST SFA unter Windows.
 
 ## Zeitbudget
@@ -521,5 +585,6 @@ Gleicher Ablauf a–d wie in Task 11.
 |---|---|---|
 | Infrastruktur | 1–10 | ca. 15,5 |
 | Pflicht-Meilenstein M1 | 11 | 3–4 |
-| Weitere Teile | 12 | 6–12 |
+| Weitere Teile | 12 | 10–20 (je nachdem, wie viele) |
 | Abgabe | 13 | 2 |
+| Toleranzen (X1) | 14 | 3 |
