@@ -254,6 +254,38 @@ Für die Teamarbeit über GitHub braucht es die Push-Freigabe. Bis dahin bleibt 
 
 ---
 
+### Task 3b: Op-Ergänzungen aus dem Zeichnungskatalog
+
+**Files:** Modify `d2c/ops.py`, `tests/test_ops.py`
+
+Herkunft: Zeichnungskatalog der sieben neuen Teile (Op-Lücken nach Häufigkeit). Aufgenommen wird, was mehrere Teile oder ein Pflichtteil braucht und wenig kostet. Shell, regelbasierte Kantenwahl, Sweep und Senkungstabellen betreffen je ein Teil und bleiben bei `run_script` bzw. in der Review-Liste.
+
+**Interfaces – Produces** (alle Werte im Container verifiziert):
+- `ExtrudeOp.taper: float = 0` – Entformungsschräge in Grad, positiv verjüngt in Extrusionsrichtung, über `extrude(..., taper=t)`. Gilt für alle Modi und für `both`. Verifiziert: Kreis Ø90, Höhe 30, 2° → V = 186443.1 (Kegelstumpf r 45 → 43.952); Tasche mit 3° als Schnitt ergibt einen gültigen Solid. Lagerschaft (2°) und Grundplatte (3°).
+- `ExtrudeOp.mode: Literal["add", "cut", "intersect"]` – `intersect` bildet die Schnittmenge mit dem bisherigen Körper (Teil „Schnittmenge“). Wie `cut` nicht als erste Op erlaubt.
+- `HullProfile(type="hull", circles: list[(u, v, r)])` mit mindestens 2 Kreisen, alle r > 0: konvexe Hülle der Kreise als Profil (Lagerschaft: Nabe und Augen; Hebel-artige Umrisse ohne Hohlkehlen). **Nicht** über `cq.Sketch().hull()`: Das liefert bei Kreisen auf einer Linie entlang u falsche Ergebnisse (Kreise r45 bei (0,0), r15 bei (±75,0) → BBox 135 statt 180) oder bricht ab (`BRep_API: command not done` bei drei gleichen Kreisen). Stattdessen eigene exakte Konstruktion:
+  - Reihenfolge der Kreise auf der Hülle über die Stützfunktion h(θ) = max_i(c_i · e(θ) + r_i) auf 7200 Winkeln (zyklische Folge der argmax-Läufe; ein Kreis darf mehrfach vorkommen).
+  - Je Übergang i → j die äußere Tangente: Normale n mit n · (c_j − c_i) = r_i − r_j, Berührpunkte c_i + r_i·n und c_j + r_j·n.
+  - Daraus ein `PathProfile` (Bogen `arc3` über den Bogenmittelpunkt, dann `line`) und denselben Build-Weg wie `path`. Enthält ein Kreis alle anderen, ist das Ergebnis dieser Kreis.
+- `build_notes` meldet `{"op_index": i, "taper": t}`, wenn `taper ≠ 0`, und `{"op_index": i, "hull_circles": [Indizes in Umlaufreihenfolge]}`.
+
+- [ ] **Step 1: Tests schreiben:**
+  - `test_extrude_taper_volume` (Kreis Ø90, Höhe 30, 2° → V = 186443.1 ± 0.5)
+  - `test_extrude_taper_cut_valid` (Box 100 × 100 × 20, Tasche Ø40 10 tief mit 3° → gültig, Volumen zwischen „ohne Tasche“ und „zylindrische Tasche“)
+  - `test_extrude_intersect` (Box 50 × 50 × 50 ∩ Kreis Ø40 entlang Y extrudiert → gültig, V = π·20²·50 ± 0.5)
+  - `test_intersect_first_op_rejected` (`BuildError`)
+  - `test_hull_collinear_u_and_v` (Kreise r45 bei (0,0), r15 bei (±75,0), Höhe 10 → BBox 180 × 90 × 10, V = 104369.6 ± 0.5; dieselben Kreise entlang v → gleiches Volumen)
+  - `test_hull_three_equal_circles` (r10 bei (−50,0), (0,0), (50,0) → gültig, BBox 120 × 20, V = 10·(100·20 + π·100) ± 0.5)
+  - `test_hull_contained_circle` (r30 bei (0,0), r5 bei (10,0) → Ergebnis wie Kreis Ø60)
+- [ ] **Step 2:** TEST-Befehl `tests/test_ops.py` → neue Tests FAIL.
+- [ ] **Step 3:** Implementieren.
+- [ ] **Step 4:** TEST-Befehl `tests/` → alle grün.
+- [ ] **Step 5:** Commit `feat(ops): draft angle, intersect mode and exact circle hull profile`.
+
+**Dauer:** ca. 1,5 h
+
+---
+
 ### Task 4: Prüfungen (R8a, R8b, R8c) und Kennzahlen
 
 **Files:** Create `d2c/checks.py`, `tests/test_checks.py`

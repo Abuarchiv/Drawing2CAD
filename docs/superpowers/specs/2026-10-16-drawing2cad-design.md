@@ -130,6 +130,7 @@ Stand: 2026-10-17 · Challenge: „Drawing2CAD“ von BCT Technology AG (Black F
   - `FindAttribute` füllt unter OCP kein Handle, daher `TDF_AttributeIterator`.
 
   XCAF-Notizen werden nicht exportiert. Was ankommt: Maßbeschreibung als `DESCRIPTIVE_REPRESENTATION_ITEM`, Flächennamen (`write.stepcaf.subshapes.name`), Layer und Farben.
+- `cq.Sketch().hull()` ist für Kreise auf einer Linie unzuverlässig: r45 bei (0,0) und r15 bei (±75,0) ergibt BBox 135 statt 180, drei gleiche Kreise brechen mit `BRep_API: command not done` ab. Entlang v stimmt das Ergebnis. Deshalb baut `hull` die Tangenten selbst (Task 3b).
 - GLB für die Web-Ansicht: `cq.Assembly.export("x.glb")` liefert ein gültiges glTF mit einem Material je Farbe (Khronos-Validator: 0 Fehler). Flächennamen übernimmt glTF nicht.
 
 ## 4. Architektur
