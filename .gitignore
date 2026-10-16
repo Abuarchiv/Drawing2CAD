@@ -1,8 +1,8 @@
 # BCT sample data and everything derived from it stays out of git
-data/
-drawings/
-tables/
-results/
+/data/
+/drawings/
+/tables/
+/results/
 
 .env
 __pycache__/

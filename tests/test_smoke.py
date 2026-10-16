@@ -11,7 +11,6 @@ def test_imports():
     import d2c  # resolves through the editable install, also with the repo mounted over /app
 
     assert cadquery.__version__ == "2.8.0"
-    assert MCPServer is not None and Image is not None and d2c is not None
 
 
 def test_pdftoppm_available():
