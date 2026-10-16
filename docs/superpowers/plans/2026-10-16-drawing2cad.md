@@ -795,19 +795,25 @@ Ausführender ist das KI-Modell über die MCP-Tools in der isolierten Sitzung au
 | M1 | Sensoraufnahme | Maßstab 2:1. Breite nicht bemaßt → aus Bogenradius = halbe Breite ableiten, `assumed` + Review `missing` mit `mark_near` auf beiden Seitenflächen. Abnahme zusätzlich: Breite im Modell 20, Seitenflächen markiert. Langloch 5/15 mit Breite 5,5; M8 als `tapped` (Ø6.8) |
 | M1 | Fuss | Verdeckte Kanten der Seitenansicht: Ø33 von oben bis zur Plattenoberkante (z 19), darunter Ø19 durch. Hohlkehle R9.5 per `edge_finish` |
 | M1 | Welle | Nut: `slot` auf `YZ` mit Offset 14 (= 20 − 6), `angle=90`, `center_distance` 80, Breite 12. Einstich Ø28 × 2,5 und Fasen als `revolve`-Punkte. Die Zeichnung bemaßt R2 und 1×45° nur einmal, sie gelten an weiteren Absätzen → `assumed` + Review |
-| 1 | Achse, Fixierung, Splint | wird aus dem Zeichnungskatalog ergänzt |
-| 2 | 3-Loch-Hebel | Kontur aus drei Augen R9/R14,5 mit Stegen 18 breit, Winkel 50°, R10-Übergänge per `fillets`. Fasen 1×45° an allen Bohrungen beidseitig |
-| 3 | Haken | Platte 20 dick (z ±10), Ring Ø152 30 dick (z ±15) laut Schnitt A-A. Kontur als `path` mit scharfen Ecken plus `fillets` für R35, R35, R16 |
-| 4 | Rotation | Titel „Drehteil“ ≠ Ordnername → Review. Maßstab 1:2. Fase 5×45°, Detail B (2:1) mit „1“. 6× Ø12 auf Ø50 als `polar` |
-| 5 | Flansch | Maßstab 2:1. Wände (5) tangential zwischen den Naben, Steg 6: Tasche schneiden, dann die Naben wieder ansetzen. Ø2,5 und Ø3,5 mit Tiefe 10; ob Gewinde → Review. Bohrspitzen werden nicht modelliert |
-| 6 | Trägerplatte | Sammelangabe R=20 → für jede betroffene Ecke `assumed` + Review (`path` + `fillets`). M5 als `tapped`, Senkungen Ø11/Ø6,6 und Ø10,5/Ø5,5. Wanddicke 6 gegenüber 6,5 in den Schnitten → Review `conflict` |
-| 7 | Dreistern | Arme unter 120°, Anzugswinkel 102°, R20 und R1. Gewölbte Oberseite eventuell per `run_script` |
-| 8 | Befestigung | Gabel R30/R40, 3× Ø12 unter 45°, schräge Rippe. Ebenen aus der Seitenansicht |
-| 9 | Maschinenteil | 12× Ø10 auf Ø76 mit 25,5° Teilung. Detail A (2:1). M10 außen als Ø10 + Review. Sammelangabe R=1 |
-| 10 | Lagerschaft, Getriebedeckel, Schnittmenge, Grundplatte | wird aus dem Zeichnungskatalog ergänzt |
-| 11 | Komplexe Zeichnung 3, 1, 2 | wird aus der Machbarkeitsprüfung ergänzt |
+| 1 | Achse | Maßstab 2,5:1. `revolve`: Flansch Ø13 × 1,1 (= 17,1 − 16), Schaft Ø10 h6, Nut Ø9,6 h10, Fase 0,3×45°. M6 als `tapped`, Bohrtiefe 14, Gewindetiefe 9. Bohrspitze 118° als `revolve` mit `mode="cut"` → `assumed` + Review |
+| 2 | Schnittmenge | Schriftfeld 1:1, gezeichnet ≈ 0,75 → Review `conflict`. Schnitt zweier Extrusionen (`mode="intersect"`, Task 3b). Langlochlänge 36 = 40 − 2·2 nur abgeleitet → `assumed` + Review |
+| 3 | 3-Loch-Hebel | Kontur aus drei Augen R9/R14,5 mit Stegen 18 breit, Winkel 50°, R10-Übergänge per `fillets`. Fasen 1×45° an allen Bohrungen beidseitig |
+| 4 | Haken | Platte 20 dick (z ±10), Ring Ø152 30 dick (z ±15) laut Schnitt A-A. Kontur als `path` mit scharfen Ecken plus `fillets` für R35, R35, R16 |
+| 5 | Rotation | Titel „Drehteil“ ≠ Ordnername → Review. Maßstab 1:2. Fase 5×45°, Detail B (2:1) mit „1“. 6× Ø12 auf Ø50 als `polar` |
+| 6 | Flansch | Maßstab 2:1. Wände (5) tangential zwischen den Naben, Steg 6: Tasche schneiden, dann die Naben wieder ansetzen. Ø2,5 und Ø3,5 mit Tiefe 10; ob Gewinde → Review. Bohrspitzen werden nicht modelliert |
+| 7 | Trägerplatte | Sammelangabe R=20 → für jede betroffene Ecke `assumed` + Review (`path` + `fillets`). M5 als `tapped`, Senkungen Ø11/Ø6,6 und Ø10,5/Ø5,5. Wanddicke 6 gegenüber 6,5 in den Schnitten → Review `conflict` |
+| 8 | Dreistern | Arme unter 120°, Anzugswinkel 102°, R20 und R1. Gewölbte Oberseite eventuell per `run_script` |
+| 9 | Befestigung | Gabel R30/R40, 3× Ø12 unter 45°, schräge Rippe. Ebenen aus der Seitenansicht |
+| 10 | Maschinenteil | 12× Ø10 auf Ø76 mit 25,5° Teilung. Detail A (2:1). M10 außen als Ø10 + Review. Sammelangabe R=1 |
+| 11 | Getriebedeckel | Maßstab 2:1. `revolve` mit `profile` (R6, R1), Ringnut der Flanschunterseite, 4× Ø6,6 H7 auf Ø55 (`polar`). Abmaße Ø68 +0,2/0, Ø28 0/−0,05, 16 0/−0,1: Vorzeigeteil für Toleranzmitte (X1) und für den PMI-Vergleich mit BCTs `Getriebedeckel_PMI.stp` (C1) |
+| 12 | Lagerschaft | Entformungsschräge 2° (`taper`, Task 3b), neutrale Ebene am Fuß → `assumed` + Review. Hülle um Nabe und Augen als `hull`-Profil (Task 3b). R2 per `edge_finish` |
+| 13 | Fixierung | Rohr Ø30/Ø24 unter 45° auf `custom`-Ebene, Querbohrung Ø5 entlang freier Achse. „3x Senkbohrung für M4“ ohne Maße → Normwerte annehmen + Review. Sammelnotiz Fasen 0,5×45° → je Kante `assumed` |
+| 14 | Splint | Schriftfeld 1:1, gezeichnet 2:1 → Review `conflict`. Halbrunddraht: Schenkel per `extrude` mit `path`, Auge per `revolve` mit `profile`, Hals notfalls `run_script`. Augen-Innen-Ø nicht gedruckt → `assumed` |
+| 15 | Grundplatte | Schriftfeld 1:1, gezeichnet 1:2 → Review `conflict`. Formwanne mit 3°-Schrägen, Wand 3, rund 100 Rundungen aus Sammelnotizen. Zuletzt; Teilergebnis mit vollständiger Review-Liste ist akzeptabel |
+| 16 | Komplexe Zeichnung 3 | Echte Textebene: zuerst `read_drawing_text`. Hauptansichten 2:1, Einzelheit W 5:1. 12 Abmaße, 6 Passungen mit Ⓔ, 10 Form- und Lagetoleranzen → alle in die Review-Liste. Innengewinde mit `thread_core="minor"` (Konvention dieser Referenzen) |
+| 17 | Komplexe Zeichnung 1 und 2 | Nur wenn Zeit bleibt. Mehrseitig, 39 bzw. 15 Durchmesser; Referenz von 2 ist ungültig. Sonst unter Limitations mit ehrlichen Zahlen |
 
-Allgemein gilt: Kantenrundungen erzeugen Zylinderflächen. Deren Ø zählen im MATCH-Vergleich mit, jede Rundung muss also stimmen.
+Die Hinweise in dieser Tabelle stammen teils aus dem Referenzvergleich (Zeichnungskatalog). Sie sind nur für QA und Auswertung bestimmt und gehen nie in eine Modell-Sitzung. Allgemein gilt: Kantenrundungen erzeugen Zylinderflächen. Deren Ø zählen im MATCH-Vergleich mit, jede Rundung muss also stimmen.
 
 **Abnahme M1 (Gate G2):** In `review.md` der Sensoraufnahme steht die Breite als Annahme, die Seitenflächen sind im STEP markiert. Drei Zeilen in `results/EVAL.md`, jede mit MATCH oder einer Abweichung, die ein Review-Eintrag erklärt. `python scripts/replay.py` liefert Exit-Code 0.
 
