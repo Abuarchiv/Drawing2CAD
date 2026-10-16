@@ -481,7 +481,7 @@ Zweck: Teile werden in einer Sitzung umgesetzt, die nur die MCP-Tools sieht. Kei
   - Exit-Code 0 immer, die Tabelle ist reine Information
   - schreibt die Tabelle immer auch nach `<results_root()>/EVAL.md` und die Zeilen als `<results_root()>/EVAL.json` (Liste von Objekten mit denselben Spalten plus `volume`, `bbox_sorted`, `ref_volume`, `ref_bbox_sorted`)
   - Referenzordner kommt aus `D2C_REF_DATA` (Standard `/app/data`), bei jedem Aufruf gelesen
-- `replay.py`: baut jedes `<results_root()>/*/ops.json` mit `expected` aus `spec.json` neu → eine Zeile je Teil mit `ok`. Exit-Code 1, wenn ein Teil nicht `ok` ist.
+- `replay.py [--export] [teil ...]`: baut jedes `<results_root()>/*/ops.json` (oder nur die genannten Teile) mit `expected` aus `spec.json` neu → eine Zeile je Teil mit `ok`. Exit-Code 1, wenn ein Teil nicht `ok` ist. Mit `--export` läuft stattdessen `Session().export(teil)` (frische Session, lädt von der Platte). So bekommen früh erzeugte Teile spätere Export-Funktionen (GLB, PMI, Toleranzmitte), ohne das Modell erneut zu befragen.
 
 - [ ] **Step 1: Tests schreiben:**
   - Alle Referenzen erzeugen die Tests selbst in tmp (CadQuery-Box mit Bohrung als STEP), keine BCT-Daten.
@@ -489,10 +489,11 @@ Zweck: Teile werden in einer Sitzung umgesetzt, die nur die MCP-Tools sieht. Kei
   - `test_eval_detects_missing_diameter` (Ergebnis ohne Bohrung → Ø fehlend nennt den Durchmesser)
   - `test_eval_resolves_folder_with_spaces` (Ordner `Komplexe Zeichnung 3` mit `1 763 1487 0.stp` und Köder `1 763 1487 0_PMI.stp`; `spec.drawing = "Komplexe Zeichnung 3/1 763 1487 0.pdf"` → nimmt die Datei ohne `_PMI`)
   - `test_replay_fails_on_bad_part`
+  - `test_replay_export_rewrites_step` (Demo-Teil aus den Fixtures per Session exportieren, `.step` löschen, `replay.py --export demo_bracket` → `.step` existiert wieder, Exit-Code 0)
   - `test_eval_bct_fuss_reference` mit `@pytest.mark.bct` (`metrics` der Referenz `Fuss/Fuss.stp`: Volumen 317209.8 ±0.5)
 - [ ] **Step 2:** TEST-Befehl → FAIL.
 - [ ] **Step 3:** Implementieren.
-- [ ] **Step 4:** TEST-Befehl → `5 passed`.
+- [ ] **Step 4:** TEST-Befehl → `6 passed`.
 - [ ] **Step 5:** Commit `feat(scripts): reference evaluation and replay`.
 
 **Dauer:** ca. 1 h
