@@ -463,16 +463,16 @@ Herkunft: Zeichnungskatalog der sieben neuen Teile (Op-Lücken nach Häufigkeit)
 
 **Files:** Create `d2c/server.py`, `d2c/instructions.md`, `tests/test_server.py`, `tests/fixtures/demo_spec.json`, `tests/fixtures/demo_ops.json`
 
-**Interfaces – Consumes:** `Session` (Task 7), `render` (Task 6), Modelle aus Task 2 und 3. **Produces:** `server = MCPServer("drawing2cad", instructions=<instructions.md>)` mit genau diesen 12 Tools. Jeder Docstring enthält einen Satz zum Zweck, die Einheiten, die Konvention für Ebene und Richtung und ein Minimalbeispiel.
+**Interfaces – Consumes:** `Session` (Task 7), `render` (Task 6), Modelle aus Task 2 und 3. **Produces:** `server = MCPServer("drawing2cad", instructions=<instructions.md>)` mit genau diesen 12 Tools. Jeder Docstring enthält einen Satz zum Zweck, die Einheiten, die Konvention für Ebene und Richtung und ein Minimalbeispiel. Die Parameter der Bau-Tools sind genau die Felder des jeweiligen Op-Modells aus Task 3 und 3b (ohne `op`), mit denselben Typen und Standardwerten. Das Tool baut daraus das Op-Modell und übergibt `model_dump()` an die Session, damit Schema und Tool nie auseinanderlaufen.
 
 | Tool | Signatur | Rückgabe |
 |---|---|---|
 | `render_drawing` | `(pdf: str, page: int = 1, dpi: int = 100, crop: list[float] \| None = None)` | Liste `[Image (png), str]`; der Text ist JSON aus `pdf_info` plus effektiver dpi, damit das Modell die Seitenzahl kennt |
 | `submit_spec` | `(spec: PartSpec)` | dict |
-| `extrude` | `(part: str, profile: Profile, plane: SketchPlane, distance: float, mode: "add"\|"cut" = "add", both: bool = False)` | Report |
-| `revolve` | `(part: str, points: list[list[float]], angle: float = 360, mode = "add")` | Report |
-| `add_holes` | `(part: str, plane: SketchPlane, d: float, positions: list[list[float]] = [], polar: PolarPattern \| None = None, depth: float \| None = None, kind = "plain", cbore_d = None, cbore_depth = None, csk_d = None, csk_angle = 90, thread = None, flip = False)` | Report |
-| `edge_finish` | `(part: str, kind: "fillet"\|"chamfer", size: float, near: list[list[float]], tol: float = 0.5)` | Report |
+| `extrude` | `(part: str, <Felder von ExtrudeOp>)`: `profile`, `plane`, `distance`, `mode`, `both`, `taper`, `refs` | Report |
+| `revolve` | `(part: str, <Felder von RevolveOp>)`: `points` oder `profile`, `angle`, `mode`, `refs` | Report |
+| `add_holes` | `(part: str, <Felder von HolesOp>)`: `plane`, `d`, `positions`, `polar`, `depth`, `kind`, `cbore_d`, `cbore_depth`, `csk_d`, `csk_angle`, `thread`, `thread_core`, `flip`, `refs` | Report |
+| `edge_finish` | `(part: str, <Felder von EdgeFinishOp>)`: `kind`, `size`, `near`, `tol`, `refs` | Report |
 | `run_script` | `(part: str, code: str)` | Report – Docstring: „Nur verwenden, wenn kein anderes Tool die Geometrie abdeckt“ |
 | `edit_op` | `(part: str, index: int, op: Op)` – Session erhält `op.model_dump()` | Report |
 | `delete_op` | `(part: str, index: int)` | Report |
