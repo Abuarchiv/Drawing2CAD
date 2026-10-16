@@ -7,7 +7,7 @@ name = "d2c"
 version = "0.1.0"
 description = "MCP server that turns 2D technical drawings into validated STEP models"
 requires-python = ">=3.12,<3.13"
-dependencies = ["cadquery==2.8.0", "mcp==2.3.0", "pydantic>=2,<3"]
+dependencies = ["cadquery==2.8.0", "mcp==2.3.0", "pydantic>=2,<3", "pymupdf==1.28.2"]
 
 [project.optional-dependencies]
 dev = ["pytest==8.*"]
