@@ -693,6 +693,21 @@ Machbarkeit belegt (R&D-Code `/private/tmp/claude-501/-Users-abu-hackathon/35627
 
 ---
 
+### Task 14b: Text- und Mess-Tools im Server
+
+Die Module aus Task 13 und 14 entstehen vorab als 13a und 14a (Modul und modulnahe Tests, parallel zu Task 3–6). Dieser Task bindet beide an den Server, sobald Task 6 und Task 8 abgenommen sind.
+
+**Files:** Modify `d2c/server.py`, `d2c/instructions.md`, `tests/test_server.py`, `tests/test_text.py`, `tests/test_vector.py`
+
+- MCP-Tools `read_drawing_text` und `measure_drawing` mit den Signaturen, Rückgaben und Pfadprüfungen aus Task 13 und Task 14 (`resolve_drawing` aus Task 6).
+- `instructions.md`: die Regeln aus Task 13 und Task 14.
+- Tests: die Demo-Zeichnungs-Tests aus Task 13 (`test_demo_text_items`, `test_region_filter`) und Task 14 (`test_demo_front_view_thickness`, `test_demo_top_view_circles`), dazu `test_measure_tool_rejects_outside_data`, `test_text_tool_rejects_outside_data` und `test_lists_14_tools` statt der bisherigen Zählung.
+- [ ] TEST-Befehl `tests/` → alle grün. Commit `feat(server): text layer and vector measurement tools`.
+
+**Dauer:** ca. 45 min
+
+---
+
 ### Task 15: Export für NX und Web: AP242 mit semantischem PMI, Farben, GLB
 
 **Files:** Create `d2c/export.py`, `tests/test_export.py`; Modify `d2c/checks.py` (`step_roundtrip` nutzt `export.write_step`), `d2c/worker.py`, `d2c/session.py`, `d2c/review.py`, `d2c/instructions.md`
