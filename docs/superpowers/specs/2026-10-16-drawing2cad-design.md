@@ -78,7 +78,9 @@ Stand: 2026-10-17 · Challenge: „Drawing2CAD“ von BCT Technology AG (Black F
 - Seiten: A3 quer (1190,55 × 841,89 pt) und A4 hoch (595,28 × 841,89 pt). Komplexe Zeichnung 1 hat 4 Seiten, Komplexe Zeichnung 2 hat 3 Seiten.
 - Maßstäbe (Schriftfeld): Flansch 2:1, Rotation 1:2, Sensoraufnahme 2:1, sonst überwiegend 1:1. Der Maßstab ist pro Zeichnung abzulesen.
 - Bewusste Lücke: `Sensoraufnahme (optional PMI)/Readme.txt` sagt, die Breite fehle absichtlich, solle angenommen und zur Kontrolle markiert werden. Sie beträgt 20 mm. Das ist der Prüffall für M3 und R10.
-- Die Referenz `Sensoraufnahme_PMI.stp` (AP242) hat neben dem Standardgrau eine zweite Farbe (RGB 0.2/0.4/0.8). Das ist das Vorbild für die Farbmarkierung. `Getriebedeckel_PMI.stp` (AP242) enthält 17 semantische Maße (Linear, Radial, Angular, Chamfer).
+- PMI in den BCT-Referenzen (aus NX 2606, AP242, R&D 17.10.):
+  - `Sensoraufnahme_PMI.stp`: Die fehlende Breite steht als **semantisches Maß** im Modell (`DIMENSIONAL_LOCATION` 20 mm zwischen den Flächen y = −10 und y = +10), ohne Notiz. Die zweite Farbe (RGB 0.2/0.4/0.8) liegt nur auf zwei Kosmetik-Gewindekreisen R4 und markiert die Annahme nicht.
+  - `Getriebedeckel_PMI.stp`: 16 semantische Maße, davon 4 mit `PLUS_MINUS_TOLERANCE` und eins mit `LIMITS_AND_FITS` (H7), dazu 18 tessellierte Beschriftungen. Keine Bezüge, keine Form- und Lagetoleranzen.
 - Der Titel weicht vom Ordnernamen ab: Ordner `Rotation`, Zeichnungstitel „Drehteil“.
 - Sammelangaben: Maschinenteil „nicht bemaßte Radien R=1“, Trägerplatte „nicht bemaßte Radien R = 20 mm“.
 - Referenzen: je 1 Solid. **Ausnahme: Die Referenz von Komplexe Zeichnung 2 ist laut `isValid()` ungültig.** Kennzahlen (nur zur Auswertung, **nie** als Eingabe für die Extraktion verwenden):
@@ -107,7 +109,7 @@ Stand: 2026-10-17 · Challenge: „Drawing2CAD“ von BCT Technology AG (Black F
 | Trägerplatte | 40 | 99314.0 | 15 × 140 × 118 | 4.2, 5.5, 6, 6.6, 11, 12, 16, 25, 40 |
 | Welle | 23 | 354588.1 | 300 × 45 × 45 | 12, 28, 30, 35, 40, 45 |
 
-- Gewindekonvention der Referenz: Innengewinde wird als Kernloch modelliert (Trägerplatte M5 → Ø4.2, Sensoraufnahme M8 → Ø6.8), Außengewinde als Nenndurchmesser (Maschinenteil M10 → Ø10).
+- Gewindekonvention der Referenzen: Die NX-Teile modellieren Innengewinde als Kernlochbohrung (Trägerplatte M5 → Ø4.2, Sensoraufnahme M8 → Ø6.8), Außengewinde mit Nenndurchmesser (Maschinenteil M10 → Ø10). Die Referenzen der komplexen Zeichnungen nutzen den Kerndurchmesser d − 1.082532·P (M3 → 2.459, M10×1 → 8.917) und färben Gewindeflächen grün (RGB 0.396/0.941/0.451). Deshalb kennt `holes` beide Varianten (`thread_core`).
 - Toleranztabellen, geprüft gegen die Passmaßtabelle in Komplexe Zeichnung 3: `h10` für 3–6 mm ergibt 0 / −0.048, also Ø6 h10 = 5.952 bis 6.000. Das stimmt. Die XML-Zeilen nutzen teils `from`/`up_to` statt `over`/`to`.
 
 ## 3. Verifizierte technische Basis
@@ -121,6 +123,14 @@ Stand: 2026-10-17 · Challenge: „Drawing2CAD“ von BCT Technology AG (Black F
 - CadQuery-Ebenen: `XY` hat die Normale +Z, `XZ` die Normale **−Y**, `YZ` die Normale +X. Ein `revolve` auf `Workplane("XZ")` um die lokale Achse (0,0)→(0,1) dreht um die globale Z-Achse.
 - Build, STEP-Export und Re-Import laufen in einem Container mit `--network none` (getestet).
 - Farbige Flächen im STEP: `asm = cq.Assembly(solid, name=..., color=cq.Color(...))`, `asm.addSubshape(face, name=..., color=cq.Color(1, 0.5, 0))`, `asm.export(path)` schreibt AP214 mit `COLOUR_RGB` und `STYLED_ITEM`. Der Re-Import ergibt denselben Solid (getestet). Hängt man `addSubshape` an einen Knoten ohne eigenen Shape, gibt es eine Warnung, deshalb den Solid direkt im Wurzelknoten übergeben.
+- AP242 mit semantischem PMI über XCAF (OCP 7.9.3, R&D 17.10., Task 15). Schreiben und Zurücklesen gehen, mit vier Fallen:
+  - Das Schema `AP242DIS` wird erst nach `STEPControl_Controller.Init_s()` angenommen; `AP242` lehnt OCCT ab.
+  - Die Wurzel muss ein Compound sein, sonst liefert `AddSubShape` Null-Labels.
+  - Der Passungsgrad wird um 2 zu hoch geschrieben, daher `DimensionGrade(n − 1)`, abgesichert durch einen Test.
+  - `FindAttribute` füllt unter OCP kein Handle, daher `TDF_AttributeIterator`.
+
+  XCAF-Notizen werden nicht exportiert. Was ankommt: Maßbeschreibung als `DESCRIPTIVE_REPRESENTATION_ITEM`, Flächennamen (`write.stepcaf.subshapes.name`), Layer und Farben.
+- GLB für die Web-Ansicht: `cq.Assembly.export("x.glb")` liefert ein gültiges glTF mit einem Material je Farbe (Khronos-Validator: 0 Fehler). Flächennamen übernimmt glTF nicht.
 
 ## 4. Architektur
 
@@ -150,7 +160,7 @@ Kernentscheidungen:
 2. **Explizite globale Koordinaten statt Flächen-Selektoren.** Jedes Feature nennt Skizzenebene (`XY`/`XZ`/`YZ` + Offset) und Position. Kleine Modelle kommen damit zuverlässiger zurecht als mit Selektor-Strings (R7).
 3. **Kanten für Rundungen und Fasen werden über einen nahen Punkt gewählt** (`near: [[x,y,z]]`). Trifft die Auswahl keine Kante, ist das ein Fehler. Es wird nie stillschweigend nichts gemacht.
 4. **Die Review-Pflicht steckt im Schema.** Jedes Maß mit `assumed=true` oder `confidence < 0.8` muss in einem Review-Eintrag mit Begründung stehen, sonst lehnt `submit_spec` die Spec ab (M3, R2).
-5. **Review-Einträge werden im STEP farbig markiert (R10).** Jeder Review-Eintrag nennt Punkte im Modell (`mark_near`). Flächen in deren Nähe exportiert der Server orange eingefärbt. Ein Prüfer sieht die Annahmen so direkt in NX. Semantisches PMI (C1) bleibt optional.
+5. **Review-Einträge werden im STEP markiert (R10, C1).** Jeder Review-Eintrag nennt Punkte im Modell (`mark_near`). Flächen in deren Nähe exportiert der Server orange eingefärbt, benannt (`CHECK <id>`) und auf dem Layer `ASSUMED_CHECK`. Ein angenommenes Maß kommt zusätzlich als semantisches PMI-Maß mit Beschreibung „ASSUMED …“ in die AP242-Datei, so wie BCT es in `Sensoraufnahme_PMI.stp` vormacht.
 6. **Sandbox in drei Schichten:**
    - Container mit `--network none`,
    - Subprozess mit `timeout` und rlimits (CPU, Speicher, Dateigröße),
@@ -175,5 +185,5 @@ Kernentscheidungen:
 
 ## 6. Außerhalb dieses Designs
 
-- C1/C2 (AP242 + semantisches PMI, NIST SFA) bekommt erst einen eigenen Plan, wenn M1–M3 und R10 erfüllt sind. Der NIST SFA läuft nur unter Windows.
-- X1 ist als letzter Task im Plan enthalten, nach den Pflichtzielen.
+- Form- und Lagetoleranzen als semantisches PMI (die BCT-Referenzen enthalten selbst keine). Die Textebene liest sie, die Review-Liste führt sie auf.
+- Der NIST STEP File Analyzer (C2) läuft nur unter Windows mit Excel. Ihn bedient die Rolle QA an einem Windows-Rechner. Auf dem Mac prüft `read_pmi` die Dateien automatisch.
