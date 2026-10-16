@@ -27,7 +27,10 @@
   - `data/` ist die vollständige Kopie mit Referenz-STEPs. Nur Tests und `scripts/eval_refs.py` nutzen sie.
   - `drawings/` enthält nur die `*_dwg.pdf`. Nur dieser Ordner wird für den MCP-Server als `/data` eingehängt (read-only).
 - Ergebnisse liegen unter `/app/results`. `D2C_DATA` und `D2C_RESULTS` überschreiben die Pfade, beide werden bei jedem Aufruf gelesen.
-- Sandbox-Grenzwerte: `D2C_TIMEOUT` (Standard 60 s), RLIMIT_AS 4 GiB, RLIMIT_FSIZE 200 MiB, RLIMIT_CPU = Timeout.
+- Sandbox-Grenzwerte:
+  - `D2C_TIMEOUT` (Standard 60 s) ist die Wanduhr-Grenze über `subprocess.run(timeout=…)`.
+  - RLIMIT_AS 4 GiB, RLIMIT_FSIZE 200 MiB.
+  - RLIMIT_CPU = 4·⌈Timeout⌉ + 10 s, nur als Rückfallgrenze. Grund: `import cadquery` allein braucht ca. 2 s CPU in 1,2 s Wanduhrzeit (12 Threads). Ein CPU-Limit gleich dem Timeout würde den Worker vorher per SIGKILL beenden (gemessen).
 - Toleranzen: linear 0.01 mm, Achsparallelität |cos| ≥ 0.9999, Roundtrip |ΔV|/V ≤ 1e-6.
 - Review-Pflicht: Jedes Maß mit `assumed=true` oder `confidence < 0.8` steht in mindestens einem `ReviewItem.refs`.
 - Kernloch-Tabelle für `kind="tapped"` (Innengewinde → Kernloch-Ø): M2 1.6, M2.5 2.05, M3 2.5, M4 3.3, M5 4.2, M6 5.0, M8 6.8, M10 8.5, M12 10.2.
@@ -200,7 +203,7 @@
 **Files:** Create `d2c/checks.py`, `tests/test_checks.py`
 
 **Interfaces – Consumes:** `Expected`, `ExpectedHole` (Task 2). **Produces:**
-- `solid_check(wp: cq.Workplane) -> dict` → `{"valid": bool, "solids": int, "free_edges": int, "volume": float, "bbox": [xmin,ymin,zmin,xmax,ymax,zmax], "ok": bool}`. Dabei gilt `ok = valid and solids == 1 and free_edges == 0 and volume > 0`. Freie Kanten werden über `ShapeAnalysis_FreeBounds` ermittelt.
+- `solid_check(wp: cq.Workplane) -> dict` → `{"valid": bool, "solids": int, "free_edges": int, "volume": float, "bbox": [xmin,ymin,zmin,xmax,ymax,zmax], "ok": bool}`. Dabei gilt `ok = valid and solids == 1 and free_edges == 0 and volume > 0`. Freie Kanten werden über `ShapeAnalysis_FreeBounds(shape, False, True)` ermittelt (Konstruktor ohne Toleranz; die Variante mit Toleranz zählt bei einer Einzelfläche 0).
 - `dimension_check(wp, expected: Expected) -> list[dict]` – `bbox` vergleicht die Kantenlängen (xlen, ylen, zlen) in Modellkoordinaten. Rückgabe je Prüfung `{"check": "bbox_x"|"bbox_y"|"bbox_z"|"hole", "expected": ..., "actual": ..., "ok": bool, "dim_ids": [...]}`.
   - Für eine Bohrung zählt nur eine zylindrische Fläche (`BRepAdaptor_Surface`, `GeomAbs_Cylinder`), die alle drei Bedingungen erfüllt: \|2r − d\| ≤ 0.01, Abstand des Punkts `at` zur Zylinderachse ≤ 0.01, \|cos(Achse, axis)\| ≥ 0.9999.
   - `actual` für eine Bohrung: nächstgelegener Zylinder `{d, dist}` oder `null`.
@@ -241,7 +244,8 @@
 - `run_worker(payload: dict, timeout: float | None = None) -> dict`:
   - `subprocess.run([sys.executable, "-I", "-m", "d2c.worker"], input=json, capture_output=True, timeout=t, preexec_fn=_limits, env={"PATH": os.environ["PATH"]}, cwd=<tmp>)` innerhalb von `with tempfile.TemporaryDirectory() as tmp`
   - Timeout → Report mit `error = "timeout after <t>s"`
-  - Exit-Code ≠ 0 ohne JSON → Report mit `error = "worker crashed: <letzte 500 Zeichen stderr>"`
+  - Rückgabecode −9 oder −24 (SIGKILL/SIGXCPU) ohne JSON → Report mit `error = "timeout after <t>s (cpu limit)"`
+  - anderer Exit-Code ≠ 0 ohne JSON → Report mit `error = "worker crashed: <letzte 500 Zeichen stderr>"`
   - `ScriptOp`s werden vor dem Start mit `check_script` geprüft.
 - Im Worker läuft `ScriptOp` mit eingeschränkten Builtins: `abs min max range len float int round sum enumerate zip list tuple dict print`.
 
@@ -365,7 +369,7 @@
 | `get_state` | `(part: str)` | dict |
 | `export_step` | `(part: str)` | Rückgabe von `Session.export` |
 
-Fehler aus `Session` (`KeyError`, `ValueError`) werden zu Tool-Fehlern mit der Originalmeldung. `if __name__ == "__main__": server.run("stdio")`.
+Fehler aus `Session` und `drawing` (`KeyError`, `ValueError`, `IndexError`) fängt jedes Tool selbst ab und wirft sie neu als `ToolError(e.args[0] if e.args else str(e))` (aus `mcp.server.mcpserver.exceptions`). Grund: mcp 2.3 reicht nur die Meldung von `ToolError` an den Client durch, jede andere Ausnahme wird zu „Error executing tool <name>“ ohne Text (verifiziert). `if __name__ == "__main__": server.run("stdio")`.
 
 `d2c/instructions.md` legt den Ablauf fest, nummeriert:
 1. Ganzseite mit 100 dpi rendern. Ansichten, Maßstab und Sammelangaben bestimmen.
@@ -391,6 +395,7 @@ Zusätzliche Regeln:
   - `test_lists_12_tools` (`list_tools` → genau die 12 Namen)
   - `test_render_returns_png` (ImageContent mit `mime_type == "image/png"`)
   - `test_bad_args_tool_error` (`ToolError`)
+  - `test_unknown_part_message` (`get_state(part="nope")` → `ToolError`, Meldung enthält `call submit_spec first`)
   - `test_fuss_end_to_end`: Pipeline-Fixture, **nicht** das finale Teil. `tests/fixtures/fuss_spec.json` und `fuss_ops.json`. Die Ops enthalten Platte 115×115×19 mit R22 (XY), Zylinder Ø57 von z 19 bis 76.2, Bohrung Ø19 durchgehend in der Mitte, 4× Ø19 auf 71×71. Die Spec setzt `expected.bbox = (115, 115, 76.2)` und 5 `ExpectedHole`s. Abbildung `op` → Tool: `extrude`→`extrude`, `revolve`→`revolve`, `holes`→`add_holes`, `edge_finish`→`edge_finish`, `script`→`run_script`. Ablauf über die Tools: `submit_spec`, alle Ops, `export_step` → `ok == True`, `.step` existiert, `review.md` enthält „Alle Prüfungen bestanden: ja“.
 - [ ] **Step 2:** TEST-Befehl → FAIL.
 - [ ] **Step 3:** Implementieren.
