@@ -1,6 +1,38 @@
 # Drawing2CAD – Design
 
-Stand: 2026-10-16 · Challenge: „Drawing2CAD“ von BCT Technology AG (Black Forest Hackathon)
+Stand: 2026-10-17 · Challenge: „Drawing2CAD“ von BCT Technology AG (Black Forest Hackathon, Team MSN)
+
+## 0. Bewertung und Gewinnstrategie
+
+**So wird bewertet** (Plattform und Plattform-Assistent, abgefragt am 17.10.2026):
+
+- **50 % Technical Score.** Eine KI prüft Code, Architektur und Baubarkeit der Abgabe. Abgegeben werden Repo-URL, Branch, optional Tag, 40-stellige Commit-SHA und ein README-Text mit Build- und Run-Anleitung. Ein fehlgeschlagener Build disqualifiziert nicht, senkt aber den Score.
+- **50 % Pitch.** Die Jury entscheidet nach dem Live-Pitch (So 13:00 bzw. 14:00, rund 15 Teams in zwei Runden, also etwa 5 Minuten je Team). Das Pitch-Deck (PDF) liest die Jury vorab, es wird während des Pitches gezeigt.
+- Die Einzelkriterien erscheinen erst auf der Ergebnisseite. **Abgabefrist: So 18.10.2026, 11:30.** Es gibt genau eine finale Abgabe, jedes Mitglied kann sie ersetzen.
+- Der Team-Key für OpenRouter (13,33 $) endet mit der Veranstaltung. Danach muss alles mit eigenem Endpunkt oder lokalem Modell laufen.
+
+**Strategie.** Jede Bewertungsachse bekommt einen eigenen, belegbaren Baustein:
+
+| Achse | Was die Prüfer sehen wollen | Unsere Antwort |
+|---|---|---|
+| Baubarkeit (KI) | Die README-Befehle laufen auf einem frischen Linux-Rechner | `docker build` und `docker run … pytest` laufen grün, ohne BCT-Daten und ohne API-Key, auf amd64 und arm64. Eine Demo baut das eigene Demo-Teil deterministisch. |
+| Architektur (KI) | klare Schichten, begründete Entscheidungen | Op-Liste, Sandbox-Worker, MCP-Schicht und Agent-Schicht sind getrennt. `docs/architecture.md` enthält Diagramm und Entscheidungen. |
+| Code-Qualität (KI) | Typen, Tests, keine toten Pfade | pydantic-Schemas, pro Modul eine Testdatei, CI-Workflow |
+| Anforderungen (KI und Jury) | jede Muss- und Kann-Anforderung belegt | Anforderungsmatrix im README: Anforderung → Modul → Test → Beleg |
+| Ergebnis (Jury) | funktioniert es mit echten Daten? | Benchmark aller 21 BCT-Teile gegen die Referenz-STEPs (Volumen, BBox, Zylinder-Ø) |
+| Vertrauen (BCT) | keine stillen Annahmen | Review-Liste, farbig markierte Flächen im STEP, Rückverfolgung jedes Modellwerts auf ein Zeichnungsmaß |
+| Extras (Jury) | AP242-PMI, PMI-Prüfung, Toleranzen, lokale Modelle | je ein Baustein mit Beleg (Abschnitt 1, C1, C2, X1, R9) |
+| Pitch (Jury) | klare Geschichte, Demo, Zahlen | 5-Minuten-Skript, Demo mit dem BCT-Prüffall Sensoraufnahme, Backup-Video, Deck mit Benchmark |
+
+**Alleinstellung gegenüber anderen Teams derselben Challenge:**
+
+1. Gemessene Ergebnisse auf allen 21 BCT-Teilen statt auf drei ausgewählten.
+2. Fehlende Maße werden aus der Zeichnung abgeleitet, begründet und im STEP markiert (Prüffall Sensoraufnahme: Breite 20).
+3. Jeder Modellwert verweist auf ein Zeichnungsmaß (`refs`). Daraus folgt der Umbau auf Toleranzmitte ohne Handarbeit.
+4. Der Server ist modellunabhängig. Die Bauphase läuft auch mit einem lokalen Modell, die Daten bleiben im Haus.
+5. Jeder Build läuft in einer Sandbox und wird sofort geprüft (Solid, Maße, STEP-Roundtrip).
+
+**Grenze:** Einen Sieg kann niemand garantieren, weil Konkurrenz und Jury-Kriterien offen sind. Der Plan sichert deshalb zuerst, was ganz in unserer Hand liegt: Baubarkeit, Muss-Ziele, Pitch-Deck. Danach folgen die Extras, sortiert nach Nutzen pro Stunde.
 
 ## 1. Anforderungen aus der Challenge (bindend)
 
@@ -22,6 +54,11 @@ Stand: 2026-10-16 · Challenge: „Drawing2CAD“ von BCT Technology AG (Black F
 | C1 (optional) | STEP AP242 mit semantischem PMI |
 | C2 (optional) | PMI-Validierung, z. B. NIST STEP File Analyzer |
 | X1 (Erweiterung) | Toleranzen auslesen, asymmetrische Toleranzen auf Toleranzmitte übertragen, prüfen, ob das 3D-Modell alle Maße innerhalb der Toleranz erfüllt; bestehende Modelle ändern |
+| J1 (Abgabe) | Build und Tests laufen per README auf linux/amd64 und linux/arm64, ohne BCT-Daten und ohne API-Key |
+| J2 (Abgabe) | README mit Schnellstart, Architektur, Anforderungsmatrix, Ergebnissen und Grenzen; keine Secrets, keine Hinweise auf Entwicklungswerkzeuge |
+| J3 (Abgabe) | Automatische Tests für jedes Modul, CI-Workflow |
+| P1 (Pitch) | Pitch-Deck als PDF vor dem Pitch auf der Plattform, mit Benchmark-Zahlen und Demo-Bildern |
+| P2 (Pitch) | Demo einer kompletten Umsetzung (live oder als Video), Upload einer Zeichnung bis zum markierten STEP |
 
 ## 2. Fakten aus den Beispieldaten (verifiziert)
 
@@ -85,13 +122,20 @@ Stand: 2026-10-16 · Challenge: „Drawing2CAD“ von BCT Technology AG (Black F
 ## 4. Architektur
 
 ```
-Zeichnung (PDF)
-  └─ MCP-Tool render_drawing ──▶ PNG an das KI-Modell (beliebiger multimodaler MCP-Client)
-KI-Modell
-  └─ füllt PartSpec (JSON) ──▶ MCP-Tool submit_spec (Schema- und Review-Regeln)
-  └─ ruft Build-Tools auf ──▶ Session hängt Operation an ──▶ Sandbox-Subprozess baut ALLE Operationen neu
-                                                           └─ Validierung R8a, R8b, R8c (Temp-STEP + Re-Import) ──▶ BuildReport (JSON)
-  └─ export_step ──▶ gleicher Build mit Zielpfad results/<Teil>/ + review.md (nur wenn alles ok)
+Browser (Web-UI :8080)                         beliebiger MCP-Client (stdio)
+  │ Upload PDF, Live-Ereignisse (SSE)            │
+  ▼                                              │
+app-Container (Internet erlaubt)                 │
+  d2c.web ── d2c.agent ── LLM-Endpunkt (OpenAI-kompatibel: OpenRouter, Ollama, LM Studio)
+               │ MCP über streamable HTTP, nur internes Docker-Netz
+               ▼                                 ▼
+mcp-Container (internes Netz, kein Internet)
+  d2c.server ── Session ── Sandbox-Worker (Subprozess, Timeout, rlimits) ── CadQuery/OCCT
+     │                         └─ Prüfungen R8a–c ──▶ BuildReport (JSON)
+     └─ export_step ──▶ results/<Teil>/: STEP (Farben, ggf. AP242-PMI), GLB, review.md, review.json, ops.json, spec.json
+
+Ablauf im Modell: render_drawing (PNG + Seiteninfo) → PartSpec (JSON) → submit_spec (Schema- und Review-Regeln)
+  → Build-Tools (jede Änderung baut ALLE Operationen neu und prüft) → export_step (nur wenn alles ok)
 ```
 
 Kernentscheidungen:
@@ -112,6 +156,10 @@ Kernentscheidungen:
    Die eigentliche Grenze bilden Container und Prozess. Die AST-Prüfung liefert nur frühe, verständliche Fehlermeldungen.
 7. **Das Modell sieht keine Referenzdaten.** Der Server hängt nur einen Ordner mit den Zeichnungs-PDFs ein. Die Teile-Session läuft außerhalb des Repos und ohne Datei-Tools, damit weder `.stp`-Dateien noch die Tabelle in Abschnitt 2 erreichbar sind.
 8. **Die Auswertung gegen die Referenz ist nur ein Entwicklungswerkzeug** (`scripts/eval_refs.py`). Verglichen werden Merkmale, die nicht von der Lage im Raum abhängen: Volumen, sortierte BBox und die Menge der Zylinderdurchmesser. Der Server selbst kennt keine Referenzen. Ist eine Referenz ungültig, wird die Zeile trotzdem ausgewertet und als „Referenz ungültig“ gekennzeichnet.
+9. **Agent und Server sind getrennt.** Der Server hat nie Internet (internes Docker-Netz bzw. `--network none`). Der Agent spricht nur mit dem LLM-Endpunkt und über MCP mit dem Server. Jeder andere MCP-Client kann den Server genauso nutzen.
+10. **Zwei Phasen, ein Vertrag.** Lesephase: ein Vision-Modell füllt die PartSpec. Bauphase: ein beliebiges Modell, auch ein kleines lokales ohne Bildverständnis, setzt die Spec in Operationen um. Die PartSpec ist die Schnittstelle zwischen beiden.
+11. **Rückverfolgbarkeit.** Jede Operation kann ihre Zahlenwerte per `refs` an Maß-ids binden. Das liefert die Tabelle „Traceability“ in der Review-Liste und erlaubt den automatischen Umbau auf Toleranzmitte (X1).
+12. **Die Web-Oberfläche hat keinen eigenen Zustand.** Sie zeigt den Ergebnisordner und die Ereignisse des Agenten.
 
 ## 5. Abnahmeschwellen
 
