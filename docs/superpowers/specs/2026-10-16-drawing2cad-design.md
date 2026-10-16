@@ -71,7 +71,10 @@ Stand: 2026-10-17 · Challenge: „Drawing2CAD“ von BCT Technology AG (Black F
 - **Alle PDFs sind Vektorzeichnungen.** Die 9 alten Teile enthalten zusätzlich nur ein Rasterbild, und zwar die schattierte Iso-Ansicht (z. B. Fuss: Bild bei x 698–1143 pt). Konturen, Maßlinien und Text sind Vektoren. Folgen:
   - Rendern liefert bei jeder Auflösung scharfe Ausschnitte.
   - Text ist in 18 Zeichnungen in Pfade umgewandelt (`pdftotext` liefert nichts). Nur die drei komplexen Zeichnungen haben echten Text, Symbole (Form- und Lagetoleranz, Durchmesser) aber in einer Symbolschrift ohne Unicode-Zuordnung.
-  - Bögen liegen als viele kurze, ungeordnete Liniensegmente vor, gruppiert nach Strichstärke. Ein schneller Versuch, daraus Kreise zu rekonstruieren, fand keine korrekten Kreise. Vektormessung ist daher nicht Teil des Pflichtumfangs.
+  - Kreise und Bögen der orthogonalen Ansichten sind kubische Bézierkurven. Ihr Mittelpunkt folgt exakt aus den Tangenten der Kontrollpunkte. Die vielen kurzen Liniensegmente sind Ellipsen der Iso-Ansicht (daran scheiterte der erste Kreisfit). Polylinien sind exakt stetig, Verketten über die Stream-Reihenfolge genügt. Die komplexen Zeichnungen speichern jedes Segment als eigenen Pfad auf einem 0,12-pt-Raster.
+  - **Vektormessung funktioniert** (R&D 17.10., Task 14): 29 von 29 Prüfwerten auf vier Zeichnungen weichen höchstens 0,0003 mm ab. Die fehlende Breite der Sensoraufnahme misst 20,0000 mm bei 2:1.
+  - Die Strichbreite sichtbarer Kanten hängt von der Vorlage ab: 1,417 pt (Sensoraufnahme), 1,984 pt (3-Loch-Hebel), 0,992 pt (Fuss, Flansch). Maß- und Hilfslinien liegen teils in derselben Klasse und werden über ihre losen Enden abgetrennt.
+  - **Datenfehler bei BCT:** Das Schriftfeld des 3-Loch-Hebels nennt 1:1, gezeichnet ist 2:1 (alle Kreise doppelt so groß wie bemaßt). Der Abgleich gedruckter Maße mit der Geometrie erkennt das (9 von 9 Stimmen). Das gehört als `conflict` in die Review-Liste.
 - Seiten: A3 quer (1190,55 × 841,89 pt) und A4 hoch (595,28 × 841,89 pt). Komplexe Zeichnung 1 hat 4 Seiten, Komplexe Zeichnung 2 hat 3 Seiten.
 - Maßstäbe (Schriftfeld): Flansch 2:1, Rotation 1:2, Sensoraufnahme 2:1, sonst überwiegend 1:1. Der Maßstab ist pro Zeichnung abzulesen.
 - Bewusste Lücke: `Sensoraufnahme (optional PMI)/Readme.txt` sagt, die Breite fehle absichtlich, solle angenommen und zur Kontrolle markiert werden. Sie beträgt 20 mm. Das ist der Prüffall für M3 und R10.
@@ -173,5 +176,4 @@ Kernentscheidungen:
 ## 6. Außerhalb dieses Designs
 
 - C1/C2 (AP242 + semantisches PMI, NIST SFA) bekommt erst einen eigenen Plan, wenn M1–M3 und R10 erfüllt sind. Der NIST SFA läuft nur unter Windows.
-- Geometrie direkt aus den PDF-Vektoren messen: möglicher späterer Präzisionsgewinn, aber noch nicht funktionsfähig (siehe Abschnitt 2).
 - X1 ist als letzter Task im Plan enthalten, nach den Pflichtzielen.
