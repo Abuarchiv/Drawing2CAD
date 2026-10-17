@@ -36,12 +36,21 @@ def failed(error):
     return {"ok": False, "error": error, "solid": None, "dims": [], "build_notes": [], "roundtrip": None}
 
 
-def fake_run(returncode, stdout=b"", stderr=b""):
-    """Stand-in for subprocess.run: finishes at once with these results and keeps the call it got."""
-    def run(args, **kwargs):
-        run.call = {"args": args, **kwargs}
-        return subprocess.CompletedProcess(args, returncode, stdout, stderr)
-    return run
+def fake_popen(returncode, stdout=b"", stderr=b""):
+    """Stand-in for subprocess.Popen: finishes at once with these results and keeps the call it got."""
+    class Process:
+        def __init__(self, args, **kwargs):
+            popen.call = {"args": args, **kwargs}
+            self.returncode = returncode
+            kwargs["stderr"].write(stderr)
+            kwargs["stderr"].flush()
+
+        def communicate(self, input=None, timeout=None):
+            popen.call["timeout"] = timeout
+            return stdout, None
+
+    popen = Process
+    return popen
 
 
 def test_worker_builds_box(tmp_path):
@@ -105,14 +114,29 @@ def test_timeout_kills(monkeypatch):
     assert run_worker(payload(box(), script("while True: pass")), timeout=2) == failed("timeout after 2s")
     assert time.monotonic() - start < 4
 
+    # a print loop floods stderr: it goes to a file, not into the parent's memory, and the whole group dies at the timeout
+    real_popen, started = subprocess.Popen, []
+
+    def recording_popen(*args, **kwargs):
+        started.append((real_popen(*args, **kwargs), kwargs))
+        return started[-1][0]
+
+    monkeypatch.setattr(subprocess, "Popen", recording_popen)
+    chatter = "while True:\n    print('x' * 1000)\n    sum(range(10**5))"  # unthrottled it hits the 200 MiB file limit first
+    flood = run_worker(payload(box(), script(chatter)), timeout=2)
+    assert flood == failed("timeout after 2s")
+    process, kwargs = started[0]
+    assert kwargs["stdout"] == subprocess.PIPE and kwargs["stderr"] not in (subprocess.PIPE, subprocess.STDOUT, None)
+    assert kwargs["start_new_session"] is True
+    with pytest.raises(ProcessLookupError):
+        os.killpg(process.pid, 0)
     # the address space limit turns a runaway allocation (4 GiB of list slots) into an error
     greedy = run_worker(payload(box(), script("slots = [0] * 2**29")))
     assert greedy == failed(greedy["error"]) and greedy["error"].startswith("BuildError: op 1 (script): MemoryError")
 
     # the call: isolated interpreter, only PATH in the environment, a scratch directory that is removed again
-    real_run = subprocess.run
-    spy = fake_run(0, stdout=json.dumps(failed("seen")).encode())
-    monkeypatch.setattr(subprocess, "run", spy)
+    spy = fake_popen(0, stdout=json.dumps(failed("seen")).encode())
+    monkeypatch.setattr(subprocess, "Popen", spy)
     monkeypatch.setenv("D2C_TIMEOUT", "2.5")  # the default timeout is read on every call
     run_worker(payload(box()))
     call = spy.call
@@ -127,18 +151,18 @@ def test_timeout_kills(monkeypatch):
     # limits as set in the child: address space 4 GiB, file size 200 MiB, CPU 4 * ceil(2.5 s) + 10 s
     probe = ("import json, resource as r\n"
              "print(json.dumps([r.getrlimit(k) for k in (r.RLIMIT_AS, r.RLIMIT_FSIZE, r.RLIMIT_CPU)]))")
-    limits = real_run([sys.executable, "-c", probe], preexec_fn=call["preexec_fn"], capture_output=True)
-    assert json.loads(limits.stdout) == [[4 * 2**30] * 2, [200 * 2**20] * 2, [22] * 2]
+    limits = real_popen([sys.executable, "-c", probe], preexec_fn=call["preexec_fn"], stdout=subprocess.PIPE)
+    assert json.loads(limits.communicate()[0]) == [[4 * 2**30] * 2, [200 * 2**20] * 2, [22] * 2]
 
     # exit status of a worker that left no report: SIGKILL or SIGXCPU is the CPU limit, anything else a crash
     for signal_exit in (-9, -24):
-        monkeypatch.setattr(subprocess, "run", fake_run(signal_exit))
+        monkeypatch.setattr(subprocess, "Popen", fake_popen(signal_exit))
         assert run_worker(payload(box()), timeout=2) == failed("timeout after 2s (cpu limit)")
     for code, stdout in ((1, b""), (0, b"not json")):  # the last 500 characters of stderr, undecodable bytes included
-        monkeypatch.setattr(subprocess, "run", fake_run(code, stdout, stderr=b"x" * 600 + b"\xff" + b"boom"))
+        monkeypatch.setattr(subprocess, "Popen", fake_popen(code, stdout, stderr=b"x" * 600 + b"\xff" + b"boom"))
         assert run_worker(payload(box())) == failed("worker crashed: " + "x" * 495 + "\ufffd" + "boom")
     finished = json.dumps(failed("BuildError: kept")).encode() + b"\n"
-    monkeypatch.setattr(subprocess, "run", fake_run(-11, finished))  # a segfault at exit does not undo the report
+    monkeypatch.setattr(subprocess, "Popen", fake_popen(-11, finished))  # a segfault at exit does not undo the report
     assert run_worker(payload(box())) == failed("BuildError: kept")
 
 
@@ -148,7 +172,7 @@ def test_script_import_os_rejected(monkeypatch):
             check_script(code)
 
     # run_worker reports the rejection and never starts a process
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: pytest.fail("the worker was started"))
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: pytest.fail("the worker was started"))
     report = run_worker(payload(box(), script("x = 1"), script("import os")))
     assert report == failed(
         "ValueError: op 2 (script): imports are not allowed in scripts (cq and math are already available)")

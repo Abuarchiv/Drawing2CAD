@@ -13,10 +13,13 @@ import signal
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 DEFAULT_TIMEOUT = 60.0  # seconds of wall clock, D2C_TIMEOUT overrides it
 MEMORY_LIMIT = 4 * 2**30  # bytes of address space
 FILE_LIMIT = 200 * 2**20  # bytes of any file the worker writes
+STDERR_FILE = "stderr.txt"  # in the scratch directory; the child cannot write more than FILE_LIMIT to it
+STDERR_TAIL = 500  # bytes of the worker's stderr kept for a crash message
 # Names that open files, run code or reach into objects. Names and attributes starting with "_" are rejected too.
 FORBIDDEN_NAMES = frozenset(
     "open exec eval compile __import__ globals locals vars getattr setattr delattr input breakpoint".split())
@@ -79,18 +82,24 @@ def run_worker(payload: dict, timeout: float | None = None) -> dict:
                 return error_report(f"ValueError: op {index} (script): {e}")
     # CPU time is only the fallback limit: import cadquery alone takes about 2 s of CPU in 1.2 s of wall clock
     cpu_seconds = 4 * math.ceil(limit) + 10
-    with tempfile.TemporaryDirectory() as scratch:
+    with tempfile.TemporaryDirectory() as scratch, open(Path(scratch) / STDERR_FILE, "w+b") as stderr:
+        # own process group, so a timeout kills whatever the worker started; stderr in a file, not in our memory
+        worker = subprocess.Popen(
+            [sys.executable, "-I", "-m", "d2c.worker"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr,
+            preexec_fn=functools.partial(_limits, cpu_seconds), env={"PATH": os.environ["PATH"]}, cwd=scratch,
+            start_new_session=True)
         try:
-            done = subprocess.run(
-                [sys.executable, "-I", "-m", "d2c.worker"], input=json.dumps(payload).encode(), capture_output=True,
-                timeout=limit, preexec_fn=functools.partial(_limits, cpu_seconds), env={"PATH": os.environ["PATH"]},
-                cwd=scratch)
+            stdout, _ = worker.communicate(json.dumps(payload).encode(), timeout=limit)
         except subprocess.TimeoutExpired:
+            os.killpg(worker.pid, signal.SIGKILL)
+            worker.communicate()
             return error_report(f"timeout after {limit:g}s")
+        stderr.seek(max(0, stderr.seek(0, os.SEEK_END) - STDERR_TAIL))
+        crash = stderr.read().decode(errors="replace")
     try:
-        return json.loads(done.stdout)  # a finished report counts even if the process died at exit
+        return json.loads(stdout)  # a finished report counts even if the process died at exit
     except ValueError:
         pass
-    if done.returncode in (-signal.SIGKILL, -signal.SIGXCPU):
+    if worker.returncode in (-signal.SIGKILL, -signal.SIGXCPU):
         return error_report(f"timeout after {limit:g}s (cpu limit)")
-    return error_report("worker crashed: " + done.stderr.decode(errors="replace")[-500:])
+    return error_report("worker crashed: " + crash)
