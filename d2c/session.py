@@ -2,12 +2,16 @@
 
 import json
 import os
+import re
 import unicodedata
 from pathlib import Path
 
 from d2c import review
 from d2c.sandbox import run_worker
 from d2c.spec import PartSpec
+
+
+PART_NAME = re.compile(r"[\w-]+")  # the same rule as PartSpec.name
 
 
 def results_root() -> Path:
@@ -33,14 +37,26 @@ class Session:
     def _load(self, part: str) -> str:
         """The normalized name of a known part; a part only on disk is loaded first."""
         part = unicodedata.normalize("NFC", part)
+        if not PART_NAME.fullmatch(part):
+            raise KeyError(f"unknown part '{part}'; call submit_spec first")
         if part not in self.specs:
-            spec_file = self._folder(part) / "spec.json"
-            if not spec_file.is_file():
+            folder = self._folder(part)
+            if not (folder / "spec.json").is_file():
                 raise KeyError(f"unknown part '{part}'; call submit_spec first")
-            self.specs[part] = PartSpec.model_validate_json(spec_file.read_text(encoding="utf-8"))
-            ops_file = self._folder(part) / "ops.json"
-            self.ops[part] = json.loads(ops_file.read_text(encoding="utf-8")) if ops_file.is_file() else []
+            self.specs[part], self.ops[part] = self._read(folder)
         return part
+
+    @staticmethod
+    def _read(folder: Path) -> tuple[PartSpec, list[dict]]:
+        """The spec and op list stored in a part folder; an unreadable file is named in the error."""
+        name = "spec.json"
+        try:
+            spec = PartSpec.model_validate_json((folder / name).read_text(encoding="utf-8"))
+            name = "ops.json"
+            ops_file = folder / name
+            return spec, json.loads(ops_file.read_text(encoding="utf-8")) if ops_file.is_file() else []
+        except ValueError as e:
+            raise ValueError(f"{folder.name}/{name} is unreadable ({e}); call submit_spec again") from e
 
     def _write_state(self, part: str) -> None:
         folder = self._folder(part)
@@ -52,6 +68,9 @@ class Session:
         spec = self.specs[part]
         known = {d.id for d in spec.dimensions}
         for op in ops:
+            if not isinstance(op, dict) or not isinstance(op.get("refs", {}), dict):
+                raise ValueError(
+                    'refs must be an object mapping an op parameter path to a dimension id, e.g. {"d": "d1"}')
             for dim_id in op.get("refs", {}).values():
                 if dim_id not in known:
                     raise ValueError(f"unknown dimension id '{dim_id}' in refs")
@@ -123,7 +142,8 @@ class Session:
         step = folder / f"{part}.step"
         report = self._build(part, self.ops[part], export_path=step)
         if not report["ok"]:
-            step.unlink(missing_ok=True)
+            for name in (step.name, "report.json", "review.md", "review.json"):
+                (folder / name).unlink(missing_ok=True)
             return {"ok": False, "error": "validation failed", "report": report}
         self.last[part] = report
         self._write_state(part)

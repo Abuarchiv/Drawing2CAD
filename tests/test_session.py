@@ -123,6 +123,15 @@ def test_export_refuses_when_not_ok(session):
     assert not list((results_root() / "plate").glob("*.step"))
 
 
+def test_failed_export_removes_older_results(session):
+    session.apply("plate", box())
+    folder = results_root() / "plate"
+    assert session.export("plate")["ok"] is True
+    session.apply("plate", box(center=[50, 0]))
+    assert session.export("plate")["ok"] is False
+    assert not any((folder / name).exists() for name in ("plate.step", "report.json", "review.md", "review.json"))
+
+
 def test_review_lists_every_assumed_dimension(session):
     session.apply("plate", box())
     markdown = (Path(session.export("plate")["files"]["review"])).read_text()
@@ -183,3 +192,61 @@ def test_reload_from_disk(session):
     assert state["ops"] == [box(), hole(3)]
     assert state["spec_summary"]["name"] == "plate"
     assert fresh.apply("plate", hole(2))["op_index"] == 2
+
+
+@pytest.mark.parametrize("name", ["../x", "a/b", "..", "x\n"])
+def test_part_name_with_path_rejected(session, name):
+    outside = results_root().parent / "x"
+    outside.mkdir()
+    (outside / "spec.json").write_text(make_spec().model_dump_json(), encoding="utf-8")
+    for call in (session.state, lambda n: session.apply(n, box()), session.export):
+        with pytest.raises(KeyError, match="unknown part"):
+            call(name)
+    assert sorted(p.name for p in outside.iterdir()) == ["spec.json"]
+
+
+def test_refs_must_be_an_object(session):
+    with pytest.raises(ValueError, match="refs must be an object"):
+        session.apply("plate", box(refs=["w"]))
+    assert session.ops["plate"] == []
+
+
+def test_unreadable_file_names_part_and_file(session):
+    (results_root() / "plate" / "ops.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError, match="plate/ops.json is unreadable"):
+        Session().state("plate")
+
+
+def test_state_after_apply(session):
+    report = session.apply("plate", box())
+    state = session.state("plate")
+    assert state["ops"] == [box()]
+    assert state["last_report"] is report
+    assert state["spec_summary"] == {
+        "name": "plate", "title": "Plate", "scale": "1:1", "dimensions": 3, "review_items": 1,
+        "expected_bbox": (20, 10, 5)}
+
+
+def test_move_op_index_out_of_range(session):
+    session.apply("plate", box())
+    session.apply("plate", hole(3))
+    for index, new_index in [(0, 99), (-1, 0), (99, 0)]:
+        with pytest.raises(IndexError):
+            session.move_op("plate", index, new_index)
+    assert session.ops["plate"] == [box(), hole(3)]
+
+
+def test_resubmitted_spec_resets_ops(session):
+    session.apply("plate", box())
+    session.submit_spec(make_spec())
+    assert session.state("plate")["ops"] == []
+    assert Session().state("plate")["ops"] == []
+
+
+def test_review_lists_revolve_radii(session):
+    session.apply("plate", box())
+    session.apply("plate", {"op": "revolve", "points": [[3, 0], [7, 0], [7, 2], [3, 2]], "mode": "cut"})
+    unreferenced = section(Path(session.export("plate")["files"]["review"]).read_text(),
+                           "Values without dimension reference")
+    assert "| 1 | points.0.0 | 3 |" in unreferenced and "| 1 | points.1.0 | 7 |" in unreferenced
+    assert "points.0.1" not in unreferenced
