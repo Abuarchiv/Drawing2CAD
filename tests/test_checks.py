@@ -97,7 +97,7 @@ def test_hole_found_by_diameter_and_position():
     assert hole_entry(wp) == {
         "check": "hole",
         "expected": {"d": 5.0, "at": (10.0, 5.0, 0.0), "axis": (0.0, 0.0, 1.0)},
-        "actual": {"d": pytest.approx(5.0), "dist": pytest.approx(0.0, abs=1e-9)},
+        "actual": {"d": pytest.approx(5.0), "dist": pytest.approx(0.0, abs=1e-9), "concave": True},
         "ok": True,
         "dim_ids": ["d2"],
     }
@@ -109,13 +109,13 @@ def test_hole_found_by_diameter_and_position():
     assert [hole_entry(bore, d=d)["actual"]["d"] for d in (5.0, 8.0)] == pytest.approx([5.0, 8.0])
 
     # the matching cylinder is reported even when one of another diameter has its axis closer to `at`
-    pins = cq.Compound.makeCompound(
+    drills = cq.Compound.makeCompound(
         [
-            cq.Solid.makeCylinder(2.5, 10, cq.Vector(10.008, 5, 0)),  # Ø5, axis 0.008 off: still the hole
-            cq.Solid.makeCylinder(4.0, 10, cq.Vector(10.001, 5, 0)),  # Ø8, axis 0.001 off
+            cq.Solid.makeCylinder(2.5, 10, cq.Vector(10.008, 5, -5)),  # Ø5 through, axis 0.008 off: the hole
+            cq.Solid.makeCylinder(4.0, 3, cq.Vector(10.001, 5, 2)),  # Ø8 from the top, axis 0.001 off
         ]
     )
-    entry = hole_entry(cq.Workplane(obj=pins))
+    entry = hole_entry(cq.Workplane().box(*PLATE).cut(cq.Workplane(obj=drills)))
     assert entry["ok"]
     assert entry["actual"]["d"] == pytest.approx(5.0)
 
@@ -125,7 +125,7 @@ def test_hole_wrong_position_fails():
     off = hole_entry(wp, at=(10.5, 5.0, 0.0))
     assert off["ok"] is False
     # the nearest cylinder is the real hole, 0.5 mm away
-    assert off["actual"] == {"d": pytest.approx(5.0), "dist": pytest.approx(0.5)}
+    assert off["actual"] == {"d": pytest.approx(5.0), "dist": pytest.approx(0.5), "concave": True}
     assert hole_entry(wp, at=(10.005, 5.0, 0.0))["ok"]
     assert not hole_entry(wp, at=(10.02, 5.0, 0.0))["ok"]
     # right place and diameter, wrong direction: |cos| >= 0.9999 allows a tilt of 0.014 per unit, not 0.015
@@ -138,9 +138,18 @@ def test_hole_wrong_diameter_fails():
     wp = plate_with_hole()
     wrong = hole_entry(wp, d=6.0)
     assert wrong["ok"] is False
-    assert wrong["actual"] == {"d": pytest.approx(5.0), "dist": pytest.approx(0.0, abs=1e-9)}
+    assert wrong["actual"] == {"d": pytest.approx(5.0), "dist": pytest.approx(0.0, abs=1e-9), "concave": True}
     assert hole_entry(wp, d=5.009)["ok"]
     assert not hole_entry(wp, d=5.011)["ok"]
+    # a convex cylinder of the right size and place is no hole: a Ø5 pin on the top face...
+    pin = cq.Workplane().box(*PLATE).faces(">Z").workplane().center(10, 5).circle(2.5).extrude(4)
+    pin_entry = hole_entry(pin)
+    assert pin_entry["ok"] is False
+    assert pin_entry["actual"] == {"d": pytest.approx(5.0), "dist": pytest.approx(0.0, abs=1e-9), "concave": False}
+    # ...and an R2.5 corner round, seen from its arc centre
+    rounded = cq.Workplane().box(*PLATE).edges("|Z and >X and >Y").fillet(2.5)
+    round_entry = hole_entry(rounded, at=(17.5, 12.5, 0.0))
+    assert (round_entry["ok"], round_entry["actual"]["concave"]) == (False, False)
     # a part without any cylindrical face has no nearest cylinder
     missing = hole_entry(cq.Workplane().box(*PLATE))
     assert (missing["ok"], missing["actual"]) == (False, None)
@@ -177,7 +186,8 @@ def test_marked_faces_colored(tmp_path):
     path = tmp_path / "box.step"
     above_top = (0, 0, 15.4)  # 0.4 mm over the top face, inside the default 0.5 mm reach
     marks = [{"id": "rv1", "near": [above_top]}]
-    result = step_roundtrip(cq.Workplane().box(10, 20, 30), str(path), marks=marks)
+    box = cq.Workplane(obj=cq.Compound.makeCompound(cq.Workplane().box(10, 20, 30).vals()))  # as build returns
+    result = step_roundtrip(box, str(path), marks=marks)
     assert result["marks"] == [{"id": "rv1", "faces": 1}]
     assert result["ok"] is True
     text = path.read_text()

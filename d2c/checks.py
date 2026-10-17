@@ -45,10 +45,28 @@ def _free_edges(shape: cq.Shape) -> int:
     return sum(len(cq.Shape.cast(w).Edges()) for w in wires if not w.IsNull())
 
 
-def _cylinders(shape: cq.Shape) -> list[gp_Cylinder]:
-    """Every cylindrical face of the shape as a cylinder in global coordinates."""
-    surfaces = [BRepAdaptor_Surface(face.wrapped) for face in shape.Faces()]
-    return [s.Cylinder() for s in surfaces if s.GetType() == GeomAbs_Cylinder]
+def _is_concave(face: cq.Face, cylinder: gp_Cylinder) -> bool:
+    """Whether the material of the cylindrical face lies outside, as around a hole.
+
+    The oriented normal of a hole surface points to the axis, that of a pin or convex round away from it.
+    """
+    axis = cylinder.Axis()
+    direction = cq.Vector(axis.Direction().X(), axis.Direction().Y(), axis.Direction().Z())
+    point = face.positionAt(0.5, 0.5)
+    offset = point - cq.Vector(axis.Location().X(), axis.Location().Y(), axis.Location().Z())
+    radial = offset - direction * offset.dot(direction)
+    return face.normalAt(point).dot(radial) < 0
+
+
+def _cylinders(shape: cq.Shape) -> list[tuple[gp_Cylinder, bool]]:
+    """Every cylindrical face of the shape as a cylinder in global coordinates, with its concavity."""
+    found = []
+    for face in shape.Faces():
+        surface = BRepAdaptor_Surface(face.wrapped)
+        if surface.GetType() == GeomAbs_Cylinder:
+            cylinder = surface.Cylinder()
+            found.append((cylinder, _is_concave(face, cylinder)))
+    return found
 
 
 def solid_check(wp: cq.Workplane) -> dict:
@@ -67,12 +85,12 @@ def solid_check(wp: cq.Workplane) -> dict:
     }
 
 
-def _check_hole(cylinders: list[gp_Cylinder], hole: ExpectedHole) -> dict:
+def _check_hole(cylinders: list[tuple[gp_Cylinder, bool]], hole: ExpectedHole) -> dict:
     """The dimension_check entry of one expected hole.
 
-    A cylinder is the hole if its diameter, the distance of hole.at from its axis and the direction
-    of its axis are all within tolerance. `actual` is that cylinder, or else the one whose axis
-    runs closest to hole.at; None if the shape has no cylindrical face.
+    A cylinder is the hole if it is concave and its diameter, the distance of hole.at from its axis
+    and the direction of its axis are all within tolerance. `actual` is that cylinder, or else the
+    one (concave or not) whose axis runs closest to hole.at; None if the shape has no cylindrical face.
     """
     point, direction = gp_Pnt(*hole.at), gp_Dir(*hole.axis)
     found = [
@@ -80,19 +98,25 @@ def _check_hole(cylinders: list[gp_Cylinder], hole: ExpectedHole) -> dict:
             "d": 2 * c.Radius(),
             "dist": gp_Lin(c.Axis()).Distance(point),
             "cos": abs(c.Axis().Direction().Dot(direction)),
+            "concave": concave,
         }
-        for c in cylinders
+        for c, concave in cylinders
     ]
     hits = [
         f
         for f in found
-        if abs(f["d"] - hole.d) <= LINEAR_TOL and f["dist"] <= LINEAR_TOL and f["cos"] >= AXIS_COS
+        if f["concave"]
+        and abs(f["d"] - hole.d) <= LINEAR_TOL
+        and f["dist"] <= LINEAR_TOL
+        and f["cos"] >= AXIS_COS
     ]
     nearest = min(hits or found, key=lambda f: f["dist"], default=None)
     return {
         "check": "hole",
         "expected": hole.model_dump(exclude={"dim_ids"}),
-        "actual": {"d": nearest["d"], "dist": nearest["dist"]} if nearest else None,
+        "actual": (
+            {"d": nearest["d"], "dist": nearest["dist"], "concave": nearest["concave"]} if nearest else None
+        ),
         "ok": bool(hits),
         "dim_ids": hole.dim_ids,
     }
@@ -148,7 +172,7 @@ def step_roundtrip(wp: cq.Workplane, path: str, marks: Sequence[dict] = ()) -> d
     back = cq.Compound.makeCompound(cq.importers.importStep(path).vals())
     valid, solids = back.isValid(), len(back.Solids())
     volume = shape.Volume()
-    volume_rel_diff = abs(back.Volume() - volume) / volume
+    volume_rel_diff = abs(back.Volume() - volume) / abs(volume)
     mark_report = [{"id": mark_id, "faces": len(faces)} for mark_id, faces in selected]
     ok = valid and solids == 1 and volume_rel_diff <= VOLUME_REL_TOL
     return {
@@ -167,5 +191,5 @@ def metrics(shape: cq.Shape) -> dict:
     return {
         "volume": shape.Volume(),
         "bbox_sorted": sorted((box.xlen, box.ylen, box.zlen)),
-        "cyl_diameters": sorted({round(2 * c.Radius(), 2) for c in _cylinders(shape)}),
+        "cyl_diameters": sorted({round(2 * c.Radius(), 2) for c, _ in _cylinders(shape)}),
     }
