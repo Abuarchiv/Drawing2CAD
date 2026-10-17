@@ -69,6 +69,8 @@ def test_extrude_xy_positive_z():
     # a profile centre is a local (u, v) offset
     bb = run(extrude(rect(10, 20, center=(3, 4)), 5))[0].BoundingBox()
     assert (bb.xmin, bb.xmax, bb.ymin, bb.ymax) == pytest.approx((-2, 8, -6, 14))
+    bb = run(extrude({"type": "circle", "center": (3, 4), "d": 10}, 5))[0].BoundingBox()
+    assert (bb.xmin, bb.xmax, bb.ymin, bb.ymax) == pytest.approx((-2, 8, -1, 9))
 
 
 def test_extrude_xz_goes_negative_y():
@@ -165,6 +167,11 @@ def test_holes_cbore_and_csk_volume_less_than_plain():
     # 90 degree countersink: cone height (9 - 5) / 2 = 2, between radius 4.5 and 2.5
     cone = math.pi * 2 / 3 * (4.5 ** 2 + 4.5 * 2.5 + 2.5 ** 2)
     assert csk.Volume() == pytest.approx(4000 - cone - math.pi * 6.25 * 8, rel=REL)
+    # 60 degree countersink: cone height 2 / tan(30 deg), the 5 mm hole continues below it
+    height = 2 / math.tan(math.radians(30))
+    steep, _ = run(block(), holes(10, [(0, 0)], 5, kind="csk", csk_d=9, csk_angle=60))
+    cone = math.pi * height / 3 * (4.5 ** 2 + 4.5 * 2.5 + 2.5 ** 2)
+    assert steep.Volume() == pytest.approx(4000 - cone - math.pi * 6.25 * (10 - height), rel=REL)
     with pytest.raises(ValueError, match="cbore_d"):
         OPS.validate_python([holes(10, [(0, 0)], 5, kind="cbore")])
     with pytest.raises(ValueError, match="csk_d"):
@@ -182,6 +189,12 @@ def test_slot_cut_volume():
     for angle in (0, 90):  # CadQuery measures the overall length, the op takes the arc centre distance
         shape, _ = run(extrude(rect(120, 120), t), extrude({**slot, "angle": angle}, -t, offset=t, mode="cut"))
         assert shape.Volume() == pytest.approx(expected, rel=REL)
+    # an off-centre slot keeps its shape: 80 + 12 long, 12 wide
+    off = {**slot, "center": (5, -3)}
+    bb = run(extrude(rect(120, 120), t), extrude(off, -t, offset=t, mode="cut"))[0].BoundingBox()
+    assert (bb.xmin, bb.xmax, bb.ymin, bb.ymax) == pytest.approx((-60, 60, -60, 60))
+    bb = run(extrude(off, t))[0].BoundingBox()
+    assert (bb.xmin, bb.xmax, bb.ymin, bb.ymax) == pytest.approx((5 - 46, 5 + 46, -3 - 6, -3 + 6))
 
 
 def test_path_profile_with_arc():
@@ -193,6 +206,10 @@ def test_path_profile_with_arc():
         shape, _ = run(extrude({"type": "path", "start": (-r, 0), "segments": [arc]}, t))
         assert shape.Volume() == pytest.approx(expected, rel=REL)
         assert (shape.BoundingBox().ymin, shape.BoundingBox().ymax) == pytest.approx((0, r))
+    counter = {"kind": "radius_arc", "to": (r, 0), "r": -r}  # r < 0 turns counter-clockwise: under the bottom
+    shape, _ = run(extrude({"type": "path", "start": (-r, 0), "segments": [counter]}, t))
+    assert shape.Volume() == pytest.approx(expected, rel=REL)
+    assert (shape.BoundingBox().ymin, shape.BoundingBox().ymax) == pytest.approx((-r, 0))
     explicit = {"type": "path", "start": (-r, 0), "segments": [through_middle, {"kind": "line", "to": (-r, 0)}]}
     assert run(extrude(explicit, t))[0].Volume() == pytest.approx(expected, rel=REL)  # already closed
     too_small = {"kind": "radius_arc", "to": (r, 0), "r": 4}
@@ -233,11 +250,11 @@ def test_fillet_seam_not_counted():
 def test_holes_requires_positions():
     plane = SketchPlane(name="XY")
     with pytest.raises(ValueError, match="positions"):
-        HolesOp(plane=plane, d=5)
+        HolesOp(op="holes", plane=plane, d=5)
     polar = {"center": (0, 0), "pitch_d": 20, "count": 3}
     with pytest.raises(ValueError, match="exactly one"):
-        HolesOp(plane=plane, d=5, positions=[(0, 0)], polar=polar)
-    assert HolesOp(plane=plane, d=5, polar=polar).polar.count == 3
+        HolesOp(op="holes", plane=plane, d=5, positions=[(0, 0)], polar=polar)
+    assert HolesOp(op="holes", plane=plane, d=5, polar=polar).polar.count == 3
 
 
 def test_path_fillets_corner():
@@ -327,7 +344,8 @@ def test_thread_minor_and_fine():
 
 
 def test_refs_valid_paths():
-    op = ExtrudeOp(profile=RectProfile(center=(0, 0), w=10, h=20), plane=SketchPlane(name="XY", offset=2), distance=5,
+    op = ExtrudeOp(op="extrude", profile=RectProfile(type="rect", center=(0, 0), w=10, h=20),
+                   plane=SketchPlane(name="XY", offset=2), distance=5,
                    refs={"profile.w": "d1", "plane.offset": "d2", "distance": "d3"})
     dumped = op.model_dump()
     assert get_path(dumped, "profile.w") == 10 and get_path(dumped, "plane.offset") == 2
@@ -338,6 +356,11 @@ def test_refs_valid_paths():
     holes_op = OPS.validate_python([holes(10, [(1, 2), (3, 4)], 5, refs={"positions.1.0": "d9", "d": "d3"})])[0]
     dumped = holes_op.model_dump()
     assert get_path(dumped, "positions.1.0") == 3
+    for bad in ("positions.-1.0", "positions. 1.0", "positions.1.-0"):
+        with pytest.raises(KeyError):
+            get_path(dumped, bad)  # list indices are non-negative whole numbers only
+        with pytest.raises(KeyError):
+            set_path(dumped, bad, 1.0)
     set_path(dumped, "positions.1.0", 3.5)
     assert dumped["positions"] == [(1, 2), (3.5, 4)]
     assert OPS.validate_python([dumped])[0].positions[1] == (3.5, 4)
@@ -348,7 +371,8 @@ def test_refs_valid_paths():
 
 
 def test_refs_bad_path_rejected():
-    kw = {"profile": RectProfile(center=(0, 0), w=10, h=20), "plane": SketchPlane(name="XY"), "distance": 5}
+    kw = {"op": "extrude", "profile": RectProfile(type="rect", center=(0, 0), w=10, h=20),
+          "plane": SketchPlane(name="XY"), "distance": 5}
     with pytest.raises(ValueError, match=r"profile\.q"):
         ExtrudeOp(**kw, refs={"profile.q": "d1"})
     with pytest.raises(ValueError, match="mode"):
@@ -359,3 +383,92 @@ def test_refs_bad_path_rejected():
         ExtrudeOp(**kw, refs={"profile.center.2": "d1"})
     with pytest.raises(ValueError, match="distanse"):  # extra="forbid" also catches misspelt fields
         ExtrudeOp(**kw, distanse=5)
+
+
+def test_extrude_taper_volume():
+    shape, notes = run(extrude({"type": "circle", "center": (0, 0), "d": 90}, 30, taper=2))
+    assert shape.Volume() == pytest.approx(186443.1, abs=0.5)  # frustum, r 45 -> 43.952
+    assert note(notes, 0) == {"op_index": 0, "taper": 2}
+    assert run(block())[1] == []
+
+
+def test_extrude_taper_cut_valid():
+    plain, _ = run(block(100, 100, 20))
+    cylindrical = plain.Volume() - math.pi * 400 * 10
+    pocket = extrude({"type": "circle", "center": (0, 0), "d": 40}, -10, offset=20, mode="cut", taper=3)
+    shape, _ = run(block(100, 100, 20), pocket)
+    assert shape.isValid() and cylindrical < shape.Volume() < plain.Volume()
+
+
+def test_extrude_intersect():
+    circle = {"type": "circle", "center": (0, 25), "d": 40}
+    shape, _ = run(block(50, 50, 50), extrude(circle, 50, plane="XZ", both=True, mode="intersect"))
+    assert shape.isValid() and shape.Volume() == pytest.approx(math.pi * 400 * 50, abs=0.5)
+
+
+def test_intersect_first_op_rejected():
+    with pytest.raises(BuildError, match="add"):
+        run(extrude(rect(10, 10), 5, mode="intersect"))
+
+
+def circle_hull(circles, height=10, plane="XY"):
+    return extrude({"type": "hull", "circles": circles}, height, plane=plane)
+
+
+def test_hull_collinear_u_and_v():
+    for circles in ([(0, 0, 45), (-75, 0, 15), (75, 0, 15)], [(0, 0, 45), (0, -75, 15), (0, 75, 15)]):
+        shape, notes = run(circle_hull(circles))
+        bb = shape.BoundingBox()
+        assert shape.isValid() and shape.Volume() == pytest.approx(104369.6, abs=0.5)
+        assert sorted((round(bb.xlen), round(bb.ylen), round(bb.zlen))) == [10, 90, 180]
+        assert set(note(notes, 0)["hull_circles"]) == {0, 1, 2}
+
+
+def test_hull_three_equal_circles():
+    shape, _ = run(circle_hull([(-50, 0, 10), (0, 0, 10), (50, 0, 10)]))
+    bb = shape.BoundingBox()
+    assert shape.isValid() and (bb.xlen, bb.ylen) == pytest.approx((120, 20))
+    assert shape.Volume() == pytest.approx(10 * (100 * 20 + math.pi * 100), abs=0.5)
+    # the middle circle may come first in the list, the result is the same
+    shape, notes = run(circle_hull([(0, 0, 10), (-50, 0, 10), (50, 0, 10)]))
+    assert shape.isValid() and shape.Volume() == pytest.approx(10 * (100 * 20 + math.pi * 100), abs=0.5)
+    assert note(notes, 0)["hull_circles"] == [2, 1]
+
+
+def test_hull_contained_circle():
+    shape, notes = run(circle_hull([(0, 0, 30), (10, 0, 5)]))
+    disc, _ = run(extrude({"type": "circle", "center": (0, 0), "d": 60}, 10))
+    assert shape.Volume() == pytest.approx(disc.Volume(), rel=REL)
+    assert note(notes, 0)["hull_circles"] == [0]
+
+
+def test_hull_rejects_bad_circles():
+    with pytest.raises(ValueError):
+        OPS.validate_python([circle_hull([(0, 0, 5)])])
+    with pytest.raises(ValueError, match="radius"):
+        OPS.validate_python([circle_hull([(0, 0, 5), (10, 0, 0)])])
+
+
+def test_cut_without_effect_warns():
+    warning = "removed no material: check plane, offset and direction"
+    far = extrude({"type": "circle", "center": (0, 0), "d": 4}, -3, offset=50, mode="cut")  # floats above the part
+    assert note(run(block(), far)[1], 1) == {"op_index": 1, "warning": warning}
+    swallow = extrude(rect(40, 40), 20, mode="intersect")  # the part lies fully inside
+    assert note(run(block(), swallow)[1], 1) == {"op_index": 1, "warning": warning}
+    away = holes(10, [(0, 0)], 3, flip=True)  # starts at the top face and drills upwards
+    assert note(run(block(), away)[1], 1)["warning"] == warning
+    assert "warning" not in note(run(block(), holes(10, [(0, 0)], 3))[1], 1)
+
+
+def test_through_hole_from_far_plane():
+    shape, _ = run(block(), holes(100, [(0, 0)], 5))  # the plane is 90 mm above the part
+    assert shape.Volume() == pytest.approx(4000 - math.pi * 6.25 * 10, rel=REL)
+
+
+def test_revolve_profile_crossing_axis_rejected():
+    def bulge(r):
+        return {"type": "path", "start": (0, 0), "segments": [{"kind": "radius_arc", "to": (0, 10), "r": r}]}
+
+    assert run({"op": "revolve", "profile": bulge(-6)})[0].isValid()  # bulges to +r
+    with pytest.raises(BuildError, match="crosses the revolve axis"):
+        run({"op": "revolve", "profile": bulge(6)})

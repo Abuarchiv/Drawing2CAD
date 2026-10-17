@@ -1,11 +1,13 @@
 """Operation models and the CadQuery build.
 
 A part is a list of operations. Each one makes its own solid, which is united with the
-result so far (mode "add") or cut from it (mode "cut"). Units are mm and degrees.
+result so far (mode "add"), cut from it (mode "cut") or intersected with it (mode "intersect").
+Units are mm and degrees.
 Sketch planes: XY has normal +Z (u=X, v=Y), XZ has normal -Y (u=X, v=Z),
 YZ has normal +X (u=Y, v=Z).
 """
 import builtins
+import itertools
 import math
 import re
 from typing import Annotated, Any, Literal, Self, Union
@@ -17,13 +19,16 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 Point2 = tuple[float, float]
 Point3 = tuple[float, float, float]
-Mode = Literal["add", "cut"]
+Mode = Literal["add", "cut", "intersect"]
 
-COARSE_PITCH = {2: 0.4, 2.5: 0.45, 3: 0.5, 4: 0.7, 5: 0.8, 6: 1.0, 8: 1.25, 10: 1.5, 12: 1.75, 16: 2.0, 20: 2.5}
-TAP_DRILL = {2: 1.6, 2.5: 2.05, 3: 2.5, 4: 3.3, 5: 4.2, 6: 5.0, 8: 6.8, 10: 8.5, 12: 10.2}
+COARSE_PITCH = {2.0: 0.4, 2.5: 0.45, 3.0: 0.5, 4.0: 0.7, 5.0: 0.8, 6.0: 1.0, 8.0: 1.25, 10.0: 1.5, 12.0: 1.75,
+                16.0: 2.0, 20.0: 2.5}
+TAP_DRILL = {2.0: 1.6, 2.5: 2.05, 3.0: 2.5, 4.0: 3.3, 5.0: 4.2, 6.0: 5.0, 8.0: 6.8, 10.0: 8.5, 12.0: 10.2}
 MINOR_FACTOR = 1.082532  # ISO 68-1: minor diameter = d - 1.082532 * pitch
 CORNER_TOL = 0.5  # mm: a fillet finds its corner within this distance of `at`
-# What a ScriptOp may use. Imports and dunder access are rejected before the script runs (sandbox).
+HULL_SAMPLES = 7200  # directions at which the support function of a circle hull is sampled
+NO_EFFECT = "removed no material: check plane, offset and direction"
+# What a ScriptOp may use. check_script (d2c/sandbox.py) rejects imports and names starting with "_" before it runs.
 SCRIPT_BUILTINS = {
     name: getattr(builtins, name)
     for name in "abs min max range len float int round sum enumerate zip list tuple dict print".split()
@@ -34,13 +39,20 @@ class BuildError(Exception):
     """An operation cannot be turned into geometry."""
 
 
+def _index(key: str) -> int:
+    """A list index of a dotted path: a non-negative whole number."""
+    if not key.isdecimal():
+        raise KeyError(key)
+    return int(key)
+
+
 def get_path(d: dict, path: str) -> Any:
     """Read the value at a dotted path in a dumped op, e.g. "profile.w" or "positions.1.0"."""
     node: Any = d
     try:
         for key in path.split("."):
-            node = node[int(key)] if isinstance(node, (list, tuple)) else node[key]
-    except (KeyError, IndexError, ValueError, TypeError):
+            node = node[_index(key)] if isinstance(node, (list, tuple)) else node[key]
+    except (KeyError, IndexError, TypeError):
         raise KeyError(path) from None
     return node
 
@@ -49,7 +61,7 @@ def set_path(d: dict, path: str, value: float) -> None:
     """Write a value at an existing dotted path of a dumped op, in place. Tuples on the way are rebuilt."""
 
     def put(node: Any, keys: list[str]) -> Any:
-        key = int(keys[0]) if isinstance(node, (list, tuple)) else keys[0]
+        key = _index(keys[0]) if isinstance(node, (list, tuple)) else keys[0]
         old = node[key]  # raises when the path does not exist
         child = value if len(keys) == 1 else put(old, keys[1:])
         if isinstance(node, tuple):
@@ -59,7 +71,7 @@ def set_path(d: dict, path: str, value: float) -> None:
 
     try:
         put(d, path.split("."))
-    except (KeyError, IndexError, ValueError, TypeError):
+    except (KeyError, IndexError, TypeError):
         raise KeyError(path) from None
 
 
@@ -132,7 +144,7 @@ def _round_corners(face: cq.Face, vertices: list[cq.Vertex], r: float) -> cq.Fac
 class RectProfile(_Model):
     """Rectangle in plane coordinates (u, v)."""
 
-    type: Literal["rect"] = "rect"
+    type: Literal["rect"]
     center: Point2
     w: float = Field(gt=0)
     """Size along u in mm."""
@@ -149,7 +161,7 @@ class RectProfile(_Model):
 class CircleProfile(_Model):
     """Circle in plane coordinates (u, v)."""
 
-    type: Literal["circle"] = "circle"
+    type: Literal["circle"]
     center: Point2
     d: float = Field(gt=0)
     """Diameter in mm."""
@@ -161,7 +173,7 @@ class CircleProfile(_Model):
 class SlotProfile(_Model):
     """Slot with two round ends in plane coordinates (u, v)."""
 
-    type: Literal["slot"] = "slot"
+    type: Literal["slot"]
     center: Point2
     center_distance: float = Field(gt=0)
     """Distance between the two arc centres in mm."""
@@ -179,7 +191,7 @@ class SlotProfile(_Model):
 class LineSegment(_Model):
     """Straight line from the current point."""
 
-    kind: Literal["line"] = "line"
+    kind: Literal["line"]
     to: Point2
 
     def draw(self, wp: cq.Workplane) -> cq.Workplane:
@@ -189,7 +201,7 @@ class LineSegment(_Model):
 class Arc3Segment(_Model):
     """Circular arc from the current point through `via` to `to`."""
 
-    kind: Literal["arc3"] = "arc3"
+    kind: Literal["arc3"]
     via: Point2
     """Any point on the arc between start and end."""
     to: Point2
@@ -201,7 +213,7 @@ class Arc3Segment(_Model):
 class RadiusArcSegment(_Model):
     """r > 0: clockwise arc, r < 0: counter-clockwise, at most 180 degrees. Prefer arc3."""
 
-    kind: Literal["radius_arc"] = "radius_arc"
+    kind: Literal["radius_arc"]
     to: Point2
     r: float
     """Arc radius in mm, must be at least half the distance to `to`."""
@@ -224,7 +236,7 @@ class CornerFillet(_Model):
     """Rounds one corner of a path profile."""
 
     at: Point2
-    """Position (u, v) of the sharp corner, found within 0.5 mm."""
+    """Position (u, v) of the sharp corner, found within CORNER_TOL (0.5 mm)."""
     r: float = Field(gt=0)
     """Fillet radius in mm."""
 
@@ -235,7 +247,7 @@ class PathProfile(_Model):
     Tangent transitions: draw the sharp corner, then round it with `fillets`.
     """
 
-    type: Literal["path"] = "path"
+    type: Literal["path"]
     start: Point2
     segments: list[Segment] = Field(min_length=1)
     fillets: list[CornerFillet] = []
@@ -257,7 +269,66 @@ class PathProfile(_Model):
         return face
 
 
-Profile = Annotated[Union[RectProfile, CircleProfile, SlotProfile, PathProfile], Field(discriminator="type")]
+class HullProfile(_Model):
+    """Convex hull of circles: hubs and lugs joined by straight outer tangents, no fillets."""
+
+    type: Literal["hull"]
+    circles: list[Point3] = Field(min_length=2)
+    """Circles as (u, v, r) in mm, every r > 0. A circle inside the hull of the others adds nothing."""
+
+    @field_validator("circles")
+    @classmethod
+    def _positive_radius(cls, circles: list[Point3]) -> list[Point3]:
+        if any(r <= 0 for _, _, r in circles):
+            raise ValueError("every circle radius must be > 0")
+        return circles
+
+    def order(self) -> list[int]:
+        """Indices of the circles on the hull, counter-clockwise from direction +u (a circle may repeat)."""
+        best = []
+        for k in range(HULL_SAMPLES):
+            eu, ev = math.cos(2 * math.pi * k / HULL_SAMPLES), math.sin(2 * math.pi * k / HULL_SAMPLES)
+            support = [round(u * eu + v * ev + r, 9) for u, v, r in self.circles]  # rounding makes ties exact
+            best.append(support.index(max(support)))  # the lowest index wins a tie
+        runs = [(i, len(list(group))) for i, group in itertools.groupby(best)]
+        if len(runs) > 1 and runs[0][0] == runs[-1][0]:
+            runs[0] = (runs[0][0], runs[0][1] + runs.pop()[1])
+        # a one-sample run is a tie between circles, not an arc of the hull
+        order = [i for i, _ in itertools.groupby(i for i, n in runs if n > 1)]
+        if len(order) > 1 and order[0] == order[-1]:
+            order.pop()
+        return order
+
+    def _point(self, i: int, angle: float) -> Point2:
+        u, v, r = self.circles[i]
+        return u + r * math.cos(angle), v + r * math.sin(angle)
+
+    def _normal(self, i: int, j: int) -> float:
+        """Angle of the outward normal of the outer tangent from circle i to circle j: n . (cj - ci) = ri - rj."""
+        (ui, vi, ri), (uj, vj, rj) = self.circles[i], self.circles[j]
+        return math.atan2(vj - vi, uj - ui) - math.acos((ri - rj) / math.hypot(uj - ui, vj - vi))
+
+    def outline(self) -> CircleProfile | PathProfile:
+        """The hull as an exact profile: an arc on every circle of `order`, joined by tangent lines."""
+        order = self.order()
+        if len(order) == 1:
+            u, v, r = self.circles[order[0]]
+            return CircleProfile(type="circle", center=(u, v), d=2 * r)
+        normals = [self._normal(i, j) for i, j in zip(order, order[1:] + order[:1])]  # normals[k] leaves order[k]
+        segments: list[Arc3Segment | LineSegment] = []
+        for k, i in enumerate(order):
+            arrive, leave = normals[k - 1], normals[k]
+            sweep = (leave - arrive) % (2 * math.pi)
+            segments.append(Arc3Segment(kind="arc3", via=self._point(i, arrive + sweep / 2), to=self._point(i, leave)))
+            segments.append(LineSegment(kind="line", to=self._point(order[(k + 1) % len(order)], leave)))
+        return PathProfile(type="path", start=self._point(order[0], normals[-1]), segments=segments)
+
+    def face(self, wp: cq.Workplane) -> cq.Face:
+        return self.outline().face(wp)
+
+
+Profile = Annotated[Union[RectProfile, CircleProfile, SlotProfile, PathProfile, HullProfile],
+                    Field(discriminator="type")]
 
 
 class OpBase(_Model):
@@ -282,10 +353,23 @@ class OpBase(_Model):
 
 def _combine(shape: cq.Shape | None, tool: cq.Shape, mode: Mode) -> cq.Shape:
     if shape is None:
-        if mode == "cut":
+        if mode != "add":
             raise BuildError("the first operation must have mode 'add'")
         return tool
-    return (shape.fuse(tool) if mode == "add" else shape.cut(tool)).clean()
+    if mode == "add":
+        return shape.fuse(tool).clean()
+    if mode == "cut":
+        return shape.cut(tool).clean()
+    if mode == "intersect":
+        return shape.intersect(tool).clean()
+    raise BuildError(f"unknown mode {mode!r}")
+
+
+def _no_effect(before: cq.Shape | None, after: cq.Shape, mode: Mode) -> dict:
+    """Build-note fields warning about a cut or intersect that left the volume unchanged."""
+    if before is not None and mode != "add" and before.Volume() - after.Volume() <= 1e-9 * before.Volume():
+        return {"warning": NO_EFFECT}
+    return {}
 
 
 def _require(shape: cq.Shape | None) -> cq.Shape:
@@ -297,15 +381,17 @@ def _require(shape: cq.Shape | None) -> cq.Shape:
 class ExtrudeOp(OpBase):
     """Extrude a profile drawn on a sketch plane along the plane normal."""
 
-    op: Literal["extrude"] = "extrude"
+    op: Literal["extrude"]
     profile: Profile
     plane: SketchPlane
     distance: float
     """Length in mm along the plane normal, negative runs against it."""
     mode: Mode = "add"
-    """add: unite with the part, cut: remove from the part."""
+    """add: unite with the part, cut: remove from the part, intersect: keep only what lies in both."""
     both: bool = False
     """Extrude symmetrically about the plane. distance is then the total thickness."""
+    taper: float = Field(default=0.0, gt=-90, lt=90)
+    """Draft angle in degrees over the whole length, positive narrows the profile in extrusion direction."""
 
     @field_validator("distance")
     @classmethod
@@ -320,14 +406,18 @@ class ExtrudeOp(OpBase):
         face = self.profile.face(wp)
         if self.both:
             face = face.translate(normal * (-self.distance / 2))
-        tool = cq.Solid.extrudeLinear(face, normal * self.distance)
-        return _combine(shape, tool, self.mode), {}
+        tool = cq.Solid.extrudeLinear(face, normal * self.distance, taper=self.taper)
+        result = _combine(shape, tool, self.mode)
+        extra = {"taper": self.taper} if self.taper else {}
+        if isinstance(self.profile, HullProfile):
+            extra["hull_circles"] = self.profile.order()
+        return result, extra | _no_effect(shape, result, self.mode)
 
 
 class RevolveOp(OpBase):
     """Revolve a profile drawn on XZ (u = r, v = z) around the global Z axis. Give points or profile."""
 
-    op: Literal["revolve"] = "revolve"
+    op: Literal["revolve"]
     points: list[Point2] | None = Field(default=None, min_length=3)
     """Polygon of (r, z) points, closed automatically."""
     profile: PathProfile | None = None
@@ -335,7 +425,7 @@ class RevolveOp(OpBase):
     angle: float = Field(default=360.0, gt=0, le=360)
     """Sweep angle in degrees, counter-clockwise seen from +Z."""
     mode: Mode = "add"
-    """add: unite with the part, cut: remove from the part."""
+    """add: unite with the part, cut: remove from the part, intersect: keep only what lies in both."""
 
     @model_validator(mode="after")
     def _check(self) -> Self:
@@ -354,9 +444,13 @@ class RevolveOp(OpBase):
 
     def apply(self, shape: cq.Shape | None) -> tuple[cq.Shape, dict]:
         profile = self.profile or PathProfile(
-            start=self.points[0], segments=[LineSegment(to=p) for p in self.points[1:]])
-        tool = cq.Solid.revolve(profile.face(cq.Workplane("XZ")), self.angle, (0, 0, 0), (0, 0, 1))
-        return _combine(shape, tool, self.mode), {}
+            type="path", start=self.points[0], segments=[LineSegment(kind="line", to=p) for p in self.points[1:]])
+        face = profile.face(cq.Workplane("XZ"))
+        if face.BoundingBox().xmin < -1e-6:
+            raise BuildError("profile crosses the revolve axis (r < 0): check arc via points / radius_arc sign")
+        tool = cq.Solid.revolve(face, self.angle, (0, 0, 0), (0, 0, 1))
+        result = _combine(shape, tool, self.mode)
+        return result, _no_effect(shape, result, self.mode)
 
 
 class PolarPattern(_Model):
@@ -386,7 +480,7 @@ def _thread(spec: str) -> tuple[float, float]:
 class HolesOp(OpBase):
     """Holes drilled from a sketch plane against its normal (flip: along it). Give positions or polar."""
 
-    op: Literal["holes"] = "holes"
+    op: Literal["holes"]
     plane: SketchPlane
     """Plane the holes start on, usually the face they enter."""
     positions: list[Point2] = []
@@ -466,12 +560,19 @@ class HolesOp(OpBase):
         angles = [math.radians(p.start_angle + i * 360 / p.count) for i in range(p.count)]
         return [(p.center[0] + p.pitch_d / 2 * math.cos(a), p.center[1] + p.pitch_d / 2 * math.sin(a)) for a in angles]
 
+    @staticmethod
+    def _through_length(shape: cq.Shape, origin: cq.Vector, drill: cq.Vector) -> float:
+        """Longer than the part: bounding box diagonal plus the gap between the plane and the box, plus 1 mm."""
+        box = shape.BoundingBox()
+        corners = itertools.product((box.xmin, box.xmax), (box.ymin, box.ymax), (box.zmin, box.zmax))
+        gap = min((cq.Vector(*c) - origin).dot(drill) for c in corners)
+        return box.DiagonalLength + max(gap, 0.0) + 1
+
     def apply(self, shape: cq.Shape | None) -> tuple[cq.Shape, dict]:
         shape = _require(shape)
         wp = self.plane.workplane()
         drill = wp.plane.zDir * (1 if self.flip else -1)
-        # through: longer than the part
-        length = self.depth if self.depth is not None else shape.BoundingBox().DiagonalLength + 1
+        length = self.depth if self.depth is not None else self._through_length(shape, wp.plane.origin, drill)
         drilled = self._drilled_d()
         centers = self._centers()
         tools = []
@@ -482,7 +583,8 @@ class HolesOp(OpBase):
                 tools.append(cq.Solid.makeCylinder(self.cbore_d / 2, self.cbore_depth, start, drill))
             elif self.kind == "csk":
                 tools.append(cq.Solid.makeCone(self.csk_d / 2, drilled / 2, self._csk_depth(), start, drill))
-        return shape.cut(*tools).clean(), {"drilled_d": drilled, "holes": len(centers)}
+        result = shape.cut(*tools).clean()
+        return result, {"drilled_d": drilled, "holes": len(centers)} | _no_effect(shape, result, "cut")
 
 
 def _is_seam(edge: cq.Edge, shape: cq.Shape) -> bool:
@@ -493,7 +595,7 @@ def _is_seam(edge: cq.Edge, shape: cq.Shape) -> bool:
 class EdgeFinishOp(OpBase):
     """Fillet or chamfer every edge within tol of a near point. Seam edges of round faces are skipped."""
 
-    op: Literal["edge_finish"] = "edge_finish"
+    op: Literal["edge_finish"]
     kind: Literal["fillet", "chamfer"]
     size: float = Field(gt=0)
     """Fillet radius or chamfer length in mm."""
@@ -519,17 +621,19 @@ class EdgeFinishOp(OpBase):
 
 
 class ScriptOp(OpBase):
-    """Fallback: Python code run with `result` (the cq.Workplane so far), `cq` and `math`.
+    """Fallback: Python code run with `result` (the cq.Workplane so far), `cq`, `math` and a few builtins.
 
+    Builtins: abs, min, max, range, len, float, int, round, sum, enumerate, zip, list, tuple, dict, print.
+    No imports and no names starting with "_" (not even `_` as a loop variable).
     It must leave a cq.Workplane holding the solid in `result`.
     """
 
-    op: Literal["script"] = "script"
+    op: Literal["script"]
     code: str
 
     def apply(self, shape: cq.Shape | None) -> tuple[cq.Shape, dict]:
         wp = cq.Workplane("XY") if shape is None else cq.Workplane(obj=shape)
-        scope = {"__builtins__": SCRIPT_BUILTINS, "cq": cq, "math": math, "result": wp}
+        scope = {"__builtins__": dict(SCRIPT_BUILTINS), "cq": cq, "math": math, "result": wp}
         exec(compile(self.code, "<script>", "exec"), scope)
         if not isinstance(scope["result"], cq.Workplane):
             raise BuildError("the script must leave a cq.Workplane in `result`")
