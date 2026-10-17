@@ -293,7 +293,7 @@ Herkunft: Zeichnungskatalog der sieben neuen Teile (Op-Lücken nach Häufigkeit)
 **Interfaces – Consumes:** `Expected`, `ExpectedHole` (Task 2). **Produces:**
 - `solid_check(wp: cq.Workplane) -> dict` → `{"valid": bool, "solids": int, "free_edges": int, "volume": float, "bbox": [xmin,ymin,zmin,xmax,ymax,zmax], "ok": bool}`. Dabei gilt `ok = valid and solids == 1 and free_edges == 0 and volume > 0`. Freie Kanten werden über `ShapeAnalysis_FreeBounds(shape, False, True)` ermittelt (Konstruktor ohne Toleranz; die Variante mit Toleranz zählt bei einer Einzelfläche 0).
 - `dimension_check(wp, expected: Expected) -> list[dict]` – `bbox` vergleicht die Kantenlängen (xlen, ylen, zlen) in Modellkoordinaten. Rückgabe je Prüfung `{"check": "bbox_x"|"bbox_y"|"bbox_z"|"hole", "expected": ..., "actual": ..., "ok": bool, "dim_ids": [...]}`.
-  - Für eine Bohrung zählt nur eine zylindrische Fläche (`BRepAdaptor_Surface`, `GeomAbs_Cylinder`), die alle drei Bedingungen erfüllt: \|2r − d\| ≤ 0.01, Abstand des Punkts `at` zur Zylinderachse ≤ 0.01, \|cos(Achse, axis)\| ≥ 0.9999.
+  - Für eine Bohrung zählt nur eine **konkave** zylindrische Fläche (`BRepAdaptor_Surface`, `GeomAbs_Cylinder`, Flächennormale zeigt zur Achse; ein Zapfen gleichen Durchmessers ist keine Bohrung), die alle drei Bedingungen erfüllt: \|2r − d\| ≤ 0.01, Abstand des Punkts `at` zur Zylinderachse ≤ 0.01, \|cos(Achse, axis)\| ≥ 0.9999.
   - `actual` für eine Bohrung: nächstgelegener Zylinder `{d, dist}` oder `null`.
 - `select_faces(shape, near: list[tuple3], tol: float = 0.5) -> list[cq.Face]` – Flächen mit `face.distance(cq.Vertex.makeVertex(*p)) <= tol` für einen der Punkte
 - `step_roundtrip(wp, path: str, marks: list[dict] = []) -> dict` – `marks` = `[{"id": str, "near": [...]}]`.
