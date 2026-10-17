@@ -392,6 +392,19 @@ def test_extrude_taper_volume():
     assert run(block())[1] == []
 
 
+def test_extrude_taper_collapse_rejected():
+    circle = {"type": "circle", "center": (0, 0), "d": 40}
+    with pytest.raises(BuildError, match="taper too large"):
+        run(extrude(circle, 500, taper=20))
+    with pytest.raises(BuildError, match="taper too large"):
+        run(block(), extrude(rect(10, 10), -10, offset=10, mode="cut", taper=30))
+
+
+def test_extrude_tiny_taper_rejected():
+    with pytest.raises(ValueError, match="0.001"):
+        ExtrudeOp(op="extrude", profile=rect(10, 10), plane={"name": "XY"}, distance=5, taper=0.0001)
+
+
 def test_extrude_taper_cut_valid():
     plain, _ = run(block(100, 100, 20))
     cylindrical = plain.Volume() - math.pi * 400 * 10
@@ -415,13 +428,16 @@ def circle_hull(circles, height=10, plane="XY"):
     return extrude({"type": "hull", "circles": circles}, height, plane=plane)
 
 
-def test_hull_collinear_u_and_v():
-    for circles in ([(0, 0, 45), (-75, 0, 15), (75, 0, 15)], [(0, 0, 45), (0, -75, 15), (0, 75, 15)]):
-        shape, notes = run(circle_hull(circles))
-        bb = shape.BoundingBox()
-        assert shape.isValid() and shape.Volume() == pytest.approx(104369.6, abs=0.5)
-        assert sorted((round(bb.xlen), round(bb.ylen), round(bb.zlen))) == [10, 90, 180]
-        assert set(note(notes, 0)["hull_circles"]) == {0, 1, 2}
+@pytest.mark.parametrize("circles, size", [
+    ([(0, 0, 45), (-75, 0, 15), (75, 0, 15)], (180, 90)),
+    ([(0, 0, 45), (0, -75, 15), (0, 75, 15)], (90, 180)),
+])
+def test_hull_collinear_u_and_v(circles, size):
+    shape, notes = run(circle_hull(circles))
+    bb = shape.BoundingBox()
+    assert shape.isValid() and shape.Volume() == pytest.approx(104369.6, abs=0.5)
+    assert (bb.xlen, bb.ylen, bb.zlen) == pytest.approx((*size, 10))
+    assert set(note(notes, 0)["hull_circles"]) == {0, 1, 2}
 
 
 def test_hull_three_equal_circles():

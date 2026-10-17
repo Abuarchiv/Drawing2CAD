@@ -7,6 +7,7 @@ Sketch planes: XY has normal +Z (u=X, v=Y), XZ has normal -Y (u=X, v=Z),
 YZ has normal +X (u=Y, v=Z).
 """
 import builtins
+import functools
 import itertools
 import math
 import re
@@ -26,6 +27,8 @@ COARSE_PITCH = {2.0: 0.4, 2.5: 0.45, 3.0: 0.5, 4.0: 0.7, 5.0: 0.8, 6.0: 1.0, 8.0
 TAP_DRILL = {2.0: 1.6, 2.5: 2.05, 3.0: 2.5, 4.0: 3.3, 5.0: 4.2, 6.0: 5.0, 8.0: 6.8, 10.0: 8.5, 12.0: 10.2}
 MINOR_FACTOR = 1.082532  # ISO 68-1: minor diameter = d - 1.082532 * pitch
 CORNER_TOL = 0.5  # mm: a fillet finds its corner within this distance of `at`
+MIN_TAPER = 0.001  # degrees, smaller drafts crash OCC
+TAPER_LENGTH_TOL = 0.01  # mm, allowed difference between requested and built length of a tapered extrusion
 HULL_SAMPLES = 7200  # directions at which the support function of a circle hull is sampled
 NO_EFFECT = "removed no material: check plane, offset and direction"
 # What a ScriptOp may use. check_script (d2c/sandbox.py) rejects imports and names starting with "_" before it runs.
@@ -283,6 +286,7 @@ class HullProfile(_Model):
             raise ValueError("every circle radius must be > 0")
         return circles
 
+    @functools.cached_property
     def order(self) -> list[int]:
         """Indices of the circles on the hull, counter-clockwise from direction +u (a circle may repeat)."""
         best = []
@@ -310,7 +314,7 @@ class HullProfile(_Model):
 
     def outline(self) -> CircleProfile | PathProfile:
         """The hull as an exact profile: an arc on every circle of `order`, joined by tangent lines."""
-        order = self.order()
+        order = self.order
         if len(order) == 1:
             u, v, r = self.circles[order[0]]
             return CircleProfile(type="circle", center=(u, v), d=2 * r)
@@ -378,6 +382,15 @@ def _require(shape: cq.Shape | None) -> cq.Shape:
     return shape
 
 
+def _require_full_length(tool: cq.Solid, normal: cq.Vector, distance: float) -> None:
+    """A draft can collapse the profile early, OCC then returns a shorter solid without complaint."""
+    heights = [v.Center().dot(normal) for v in tool.Vertices()]
+    length = max(heights) - min(heights)
+    if abs(length - abs(distance)) > TAPER_LENGTH_TOL:
+        raise BuildError(f"taper too large: the profile collapses after {length:.2f} mm, "
+                         f"reduce taper or distance ({abs(distance):g} mm requested)")
+
+
 class ExtrudeOp(OpBase):
     """Extrude a profile drawn on a sketch plane along the plane normal."""
 
@@ -391,7 +404,9 @@ class ExtrudeOp(OpBase):
     both: bool = False
     """Extrude symmetrically about the plane. distance is then the total thickness."""
     taper: float = Field(default=0.0, gt=-90, lt=90)
-    """Draft angle in degrees over the whole length, positive narrows the profile in extrusion direction."""
+    """Draft angle in degrees over the whole length, positive narrows the profile in extrusion direction.
+    0 or at least 0.001 in size. With both=True the draft runs from the face at -distance/2 to the face at
+    +distance/2 and is not mirrored about the plane. A draft that collapses the profile before the end is an error."""
 
     @field_validator("distance")
     @classmethod
@@ -400,6 +415,13 @@ class ExtrudeOp(OpBase):
             raise ValueError("distance must not be 0")
         return distance
 
+    @field_validator("taper")
+    @classmethod
+    def _usable_taper(cls, taper: float) -> float:
+        if 0 < abs(taper) < MIN_TAPER:  # OCC crashes the interpreter on a draft this small
+            raise ValueError(f"taper must be 0 or at least {MIN_TAPER} degrees")
+        return taper
+
     def apply(self, shape: cq.Shape | None) -> tuple[cq.Shape, dict]:
         wp = self.plane.workplane()
         normal = wp.plane.zDir
@@ -407,10 +429,12 @@ class ExtrudeOp(OpBase):
         if self.both:
             face = face.translate(normal * (-self.distance / 2))
         tool = cq.Solid.extrudeLinear(face, normal * self.distance, taper=self.taper)
+        if self.taper:
+            _require_full_length(tool, normal, self.distance)
         result = _combine(shape, tool, self.mode)
         extra = {"taper": self.taper} if self.taper else {}
         if isinstance(self.profile, HullProfile):
-            extra["hull_circles"] = self.profile.order()
+            extra["hull_circles"] = self.profile.order
         return result, extra | _no_effect(shape, result, self.mode)
 
 
