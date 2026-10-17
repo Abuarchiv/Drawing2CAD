@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Repo-Wurzel: `/Users/abu/hackathon`, Branch `main`, Remote `origin` = `https://github.com/Abuarchiv/Drawing2CAD.git`. Es wird nur lokal committet, Push nur nach ausdrücklicher Freigabe.
+- Repo-Wurzel: `/Users/abu/hackathon`, Arbeitsbranch `dev` (Fast-Forward nach `main` erst in Task 21), Remote `origin` = `https://github.com/Abuarchiv/Drawing2CAD.git`. Es wird nur lokal committet, Push nur nach ausdrücklicher Freigabe.
 - Commit-Nachrichten im Conventional-Commits-Stil. Kein Hinweis auf KI-Werkzeuge, keine Co-Author-Zeilen.
 - Basis-Image `python:3.12-slim`. apt-Pakete: `libgl1 libglu1-mesa libxrender1 poppler-utils`.
 - Versionen fest gepinnt: `cadquery==2.8.0`, `mcp==2.3.0`, `pytest==8.*`.
@@ -45,21 +45,34 @@
 
 ## Zeitplan, Gates und Rollen
 
-Stand Sa 17.10. 00:50. Abgabe So 11:30, Pitch ab 13:00.
+Stand Sa 17.10. 09:00 (neu geplant, G1 von 07:00 ist gerissen). Abgabe So 11:30, Pitch ab 13:00.
+
+**Stand der Tasks** (Ledger mit SHAs und Reviews: `.superpowers/sdd/2026-10-16-drawing2cad/progress.md`):
+
+| Status | Tasks |
+|---|---|
+| Fertig, reviewt, committet (HEAD `4894a43`) | 1, 2, 3, 3b, 4, 5, 6, 7; die Module 12a (Toleranzen), 13a (Textebene), 14a (Vektormessung), 15a (AP242-Export) |
+| Angefangen, nicht committet | 8 mit 14b (`d2c/server.py`, `d2c/instructions.md`, `tests/test_server.py`, Demo-Fixtures, Änderungen in `tests/test_text.py` und `tests/test_vector.py`); 17 (`d2c/web/`, `tests/test_web.py`). Der Teilstand wird gegen den Brief geprüft und weitergeführt, nicht verworfen. |
+| Offen | 9, 10, 11, Integration 12b + 15b, 16, 18, 19, 20 (Deck-Entwurf steht, Zahlen fehlen), 21 |
+
+Für 16, 17 und 19 gelten zusätzlich die Festlegungen in `task-16-brief.md`, `task-17-brief.md` und `task-19-brief.md` im selben Ordner.
+
+**Ausführung:** einzelne Subagents (Agent-Tool, keine Workflows). Je Task gibt es einen Implementierer (sonnet), ein Review (sonnet) und höchstens zwei Fix-Runden. Das Branch-Review am Ende ist opus. Gemeinsame Regeln für alle Agents: `agent-common.md`. Neue Tasks starten erst nach Freigabe dieses Plans.
 
 | Zeitraum | Gate | Inhalt |
 |---|---|---|
-| Sa 00:30–07:00 | **G1** 07:00 | Tasks 1–10: Kern. Alle Tests grün, Demo-Teil exportiert, isolierte Teile-Sitzung läuft. |
-| Sa 07:00–10:00 | **G2** 10:00 | Task 18 M1 (Sensoraufnahme, Fuss, Welle) → **Muss-Ziel erreicht**. Parallel Task 11 und 14. |
-| Sa 10:00–18:00 | **G3** 18:00 | Tasks 12, 13, 15, 16; Task 18 weiter (Ziel: mindestens 12 Teile). NX-Check der ersten STEPs mit BCT-Mentor. |
-| Sa 18:00–24:00 | **G4** 24:00 | Task 17, Task 18 weiter, Deck-Entwurf (Task 20). Danach keine neuen Tools mehr. |
-| So 00:00–09:00 | **G5** 09:00 | Task 18 Rest (komplexe Zeichnungen soweit möglich), Task 19, Deck und Video. |
+| Sa 09:00–12:00 | **G1** 12:00 | 8 (mit 14b), 10 und 17 parallel. Danach Integration 12b + 15b und 11. Alle Tests grün, Demo-Teil über die Session exportiert, `python -m d2c.demo` grün. |
+| Sa 12:00–14:00 | **G2** 14:00 | Image `d2c:prod`, Task 9 Rauchtest, Task 18 M1 (Sensoraufnahme, Fuss, Welle) → **Muss-Ziel erreicht**. |
+| Sa 14:00–20:00 | **G3** 20:00 | 16 mit Messung der lokalen Modelle (`docs/models.md`); Task 18 weiter (Ziel: mindestens 12 Teile); NX-Check der ersten STEPs mit BCT-Mentor. |
+| Sa 20:00–24:00 | **G4** 24:00 | 19 (README, Architektur, CI), Branch-Review (opus) mit Fixes, Deck mit echten Zahlen (Task 20). Danach keine neuen Tools mehr. |
+| So 00:00–09:00 | **G5** 09:00 | Task 18 Rest (komplexe Zeichnungen soweit möglich), Deck, Video, Screenshot `docs/img/web-ui.png`. |
 | So 09:00–11:15 | Abgabe | Task 21, Puffer bis 11:30. |
 
 **Schnittlinien**, falls ein Gate reißt:
-- G1 nach 09:00: Task 17 nur als Ergebnis-Browser ohne Upload; Task 13 nur, wenn komplexe Zeichnungen angegangen werden.
-- G2 nach 13:00: Komplexe Zeichnungen 1 und 2 entfallen; Task 15 nur Farben, kein AP242-PMI.
-- G3 nach 21:00: Task 16 nur mit Skript-Tests und einem lokalen Modell, kein Live-Upload.
+- G1 nach 13:00: Task 17 nur als Ergebnis-Browser ohne Upload und ohne Live-Läufe.
+- G2 nach 16:00: Komplexe Zeichnungen 1 und 2 entfallen.
+- G3 nach 22:00: Task 16 nur mit Skript-Tests und einem lokalen Modell, kein Live-Upload in der Web-Oberfläche.
+- G4 nach 02:00: Branch-Review nur mit einer Linse (End-to-End-Korrektheit).
 - Nie gekürzt: Baubarkeit (J1), Tests, README, M1, Review-Liste mit Markierung, Pitch-Deck.
 
 **Rollen** (Namen vergibt das Team):
